@@ -40,9 +40,19 @@ class OneWayOutTest {
             "Socket", "OkHttp", "okhttp", "WebView", "CookieHandler", "CookieManager", "DownloadManager", "HttpClient", "ktor", "URL(")
         for (f in sources) {
             if (f.place() == "net/HttpTransport.kt") continue
+            // Fork prototype: the Tab menu's link to Chrome's debugging socket, on this device's loopback only (below).
+            if (f.place() == "net/ChromeTabsLink.kt") continue
             val text = code(f)
             for (way in ways) assertTrue("${f.place()} mentions $way: connections are opened in net/HttpTransport.kt only", way !in text)
         }
+    }
+
+    @Test fun theChromeTabsLinkStaysOnTheDevice() {
+        // Fork prototype: the one other file that opens a connection names one address, the loopback, and takes none from outside.
+        val text = code(File(main, "io/github/kuscher/bentobar/net/ChromeTabsLink.kt"))
+        assertTrue(text.contains("HOST = \"127.0.0.1\""))
+        assertTrue("it connects only to HOST", Regex("""InetSocketAddress\(([^,]+),""").findAll(text).all { it.groupValues[1].trim() == "HOST" })
+        assertTrue("it reads no key and asks no service", "Online." !in text && "Http.get(" !in text)
     }
 
     @Test fun onlyWeatherFlightAndStocksAskAService() {

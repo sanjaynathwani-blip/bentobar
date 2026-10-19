@@ -59,7 +59,7 @@ bug_report
 """.split()
 # Added for the app menu bar (fork): the Window and app menus.
 ICONS += """
-minimize fullscreen splitscreen splitscreen_left splitscreen_right new_window crop_square filter_none
+minimize fullscreen splitscreen splitscreen_left splitscreen_right new_window crop_square filter_none tab
 """.split()
 
 # Added for the Stocks item: its glyph in the bar goes up, down or flat with the day's change.

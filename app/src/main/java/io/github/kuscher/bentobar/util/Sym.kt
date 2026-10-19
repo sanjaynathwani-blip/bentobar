@@ -199,6 +199,7 @@ object Sym {
     const val SWAP_VERT = "\ue8d5"
     const val SYNC = "\ue627"
     const val SYNC_PROBLEM = "\ue629"
+    const val TAB = "\ue8d8"
     const val TEXT_FIELDS = "\ue262"
     const val THERMOMETER = "\ue846"
     const val THERMOSTAT = "\uf076"

@@ -44,6 +44,10 @@ import androidx.compose.material3.Text
 import io.github.kuscher.bentobar.R
 import io.github.kuscher.bentobar.items.Env
 import io.github.kuscher.bentobar.items.MenuHost
+import io.github.kuscher.bentobar.net.ChromeTabsLink
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import io.github.kuscher.bentobar.ui.MenuCard
 import io.github.kuscher.bentobar.ui.MenuDivider
 import io.github.kuscher.bentobar.ui.MenuEntry
@@ -56,8 +60,13 @@ data class FrontApp(val windowId: Int, val pkg: String, val label: String)
 
 /** The words of the app menu bar, as popup keys ("app:name"…). */
 enum class AppMenu(val key: String) {
-    NAME("app:name"), WINDOW("app:window"), SETTINGS("app:settings");
-    companion object { fun of(key: String?) = entries.firstOrNull { it.key == key } }
+    NAME("app:name"), WINDOW("app:window"), TAB("app:tab"), SETTINGS("app:settings");
+    /** Whether [app]'s bar has this word: Tab is Chrome's alone (prototype). */
+    fun shownFor(app: FrontApp) = this != TAB || app.pkg == CHROME
+    companion object {
+        const val CHROME = "com.android.chrome"
+        fun of(key: String?) = entries.firstOrNull { it.key == key }
+    }
 }
 
 /**
@@ -159,6 +168,12 @@ class AppWindows(private val service: AccessibilityService) {
         return false
     }
 
+    /** The window's title as Android lists it, without the app's name in front ("Chrome: Reddit" is "Reddit"): a browser's current tab. */
+    fun title(app: FrontApp): String? {
+        val t = runCatching { service.windows }.getOrDefault(emptyList()).firstOrNull { it.id == app.windowId }?.title?.toString() ?: return null
+        return t.removePrefix("${app.label}: ")
+    }
+
     fun appInfo(app: FrontApp) = Env.launch(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.pkg, null)))
     fun notifications(app: FrontApp) = Env.launch(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, app.pkg))
     fun language(app: FrontApp) {
@@ -209,10 +224,11 @@ fun AppMenuStrip(
 ) {
     MeasuredStrip(bias = -1f, onWidth = onWidth) {
         Row(Modifier.height(heightDp), verticalAlignment = Alignment.CenterVertically) {
-            for (menu in AppMenu.entries) {
+            for (menu in AppMenu.entries.filter { it.shownFor(app) }) {
                 val word = when (menu) {
                     AppMenu.NAME -> app.label
                     AppMenu.WINDOW -> stringResource(R.string.appmenu_window)
+                    AppMenu.TAB -> stringResource(R.string.appmenu_tab)
                     AppMenu.SETTINGS -> stringResource(R.string.appmenu_settings)
                 }
                 MenuWord(word, bold = menu == AppMenu.NAME, look = look, open = open == menu,
@@ -293,5 +309,42 @@ fun AppSettingsMenu(app: FrontApp, windows: AppWindows, host: MenuHost) {
         MenuEntry(Sym.LANGUAGE, stringResource(R.string.appmenu_language)) { host.close(); windows.language(app) }
         MenuEntry(Sym.SHIELD, stringResource(R.string.appmenu_permissions)) { host.close(); windows.permissions(app) }
         MenuEntry(Sym.LINK, stringResource(R.string.appmenu_open_by_default)) { host.close(); windows.openByDefault(app) }
+    }
+}
+
+/** What the Tab menu read: Chrome's tabs, or null when the relay to Chrome's debugging socket isn't there. */
+private class ReadTabs(val tabs: List<ChromeTabsLink.Tab>?)
+
+/**
+ * Chrome's open tabs (PROTOTYPE: through Chrome's debugging socket, see [ChromeTabsLink]). Chrome's list doesn't say
+ * which window a tab is in, so it is every window's, in the order the tabs were opened; the one marked is the front
+ * window's current tab (the window's title names it). A click brings that tab to the front; Next and Previous step
+ * along the list.
+ */
+@Composable
+fun TabMenu(current: String?, host: MenuHost) {
+    val read by produceState<ReadTabs?>(null) { value = ReadTabs(withContext(Dispatchers.IO) { ChromeTabsLink.list() }) }
+    val tabs = read?.tabs?.sortedBy { it.id.toIntOrNull() ?: Int.MAX_VALUE }
+    // The list is most recently used first: of several tabs with the window's title, the first is the one in front.
+    val currentId = read?.tabs?.firstOrNull { it.title == current }?.id
+    fun go(id: String) { host.close(); Thread { ChromeTabsLink.activate(id) }.start() }
+    fun step(by: Int) {
+        val list = tabs ?: return
+        val at = list.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
+        go(list[(at + by).mod(list.size)].id)
+    }
+    MenuCard(Sym.TAB, stringResource(R.string.appmenu_tab), subtitle = when {
+        read == null -> stringResource(R.string.appmenu_tab_loading)
+        tabs == null -> stringResource(R.string.appmenu_tab_unreachable)
+        else -> stringResource(R.string.appmenu_tab_scope)
+    }) {
+        if (tabs.isNullOrEmpty()) return@MenuCard
+        MenuEntry(Sym.ARROW_FORWARD, stringResource(R.string.appmenu_tab_next)) { step(1) }
+        MenuEntry(Sym.ARROW_BACK, stringResource(R.string.appmenu_tab_previous)) { step(-1) }
+        MenuDivider()
+        for (t in tabs) {
+            MenuEntry(if (t.id == currentId) Sym.CHECK else Sym.TAB, t.title.ifBlank { t.url }.take(70),
+                sub = Uri.parse(t.url).host?.removePrefix("www.")) { go(t.id) }
+        }
     }
 }

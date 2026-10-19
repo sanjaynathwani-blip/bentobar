@@ -457,6 +457,7 @@ class BarController(private val service: AccessibilityService) {
         if (app == frontApp.value) return
         val was = frontApp.value
         frontApp.value = app
+        appPlaced.clear() // the words are placed again for this app (Chrome's bar has one more)
         if (AppMenu.of(menuKey) != null && app?.windowId != was?.windowId) closeMenu()
         check(full = false)
     }
@@ -501,6 +502,10 @@ class BarController(private val service: AccessibilityService) {
                 toggleMenu(m.key, at, 260, from = appStrip) { host -> WindowMenu(app, caption, apps, host) }
             }
             AppMenu.SETTINGS -> toggleMenu(m.key, at, 260, from = appStrip) { host -> AppSettingsMenu(app, apps, host) }
+            AppMenu.TAB -> {
+                val current = apps.title(app)
+                toggleMenu(m.key, at, 360, from = appStrip) { host -> TabMenu(current, host) }
+            }
         }
     }
 
@@ -1073,7 +1078,7 @@ class BarController(private val service: AccessibilityService) {
                         Log.i("BentoBarProbe", "${depth} ${node.className?.toString()?.substringAfterLast('.')} id=${node.viewIdResourceName?.substringAfterLast('/')} " +
                             "desc='${node.contentDescription?.take(80)}' text='${node.text?.take(60)}' click=${node.isClickable} sel=${node.isSelected} " +
                             "${b.toShortString()} [${node.actionList.joinToString(",") { a -> a.label?.toString() ?: a.id.toString() }}]")
-                    if (node.className?.contains("WebView") != true) for (i in 0 until node.childCount) node.getChild(i)?.let { queue.addLast(it to depth + 1) }
+                    if (node.className?.contains("webkit") != true) for (i in 0 until node.childCount) node.getChild(i)?.let { queue.addLast(it to depth + 1) }
                 }
                 "$n nodes"
             }
@@ -1089,7 +1094,7 @@ class BarController(private val service: AccessibilityService) {
                 "pressed=${apps.pressCaption(id, cmd.getOrElse(2) { "" }, cmd.drop(3).joinToString(" ").ifEmpty { null })}"
             }
             "appopen" -> {
-                val m = AppMenu.entries.firstOrNull { it.name.equals(cmd.getOrNull(1), ignoreCase = true) } ?: return "appopen name|window|settings"
+                val m = AppMenu.entries.firstOrNull { it.name.equals(cmd.getOrNull(1), ignoreCase = true) } ?: return "appopen name|window|tab|settings"
                 openAppMenu(m); "menu=$menuKey"
             }
             "sample" -> { sampleColor(); "sampling" }
