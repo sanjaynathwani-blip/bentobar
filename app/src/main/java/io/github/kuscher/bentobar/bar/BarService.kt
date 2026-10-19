@@ -1060,6 +1060,23 @@ class BarController(private val service: AccessibilityService) {
                 "${w.id}:t${w.type}:${w.title}:${r.toShortString()}"
             }
             "probe" -> probeWindows()
+            // `probewin WINDOW_ID`: every node of one window that says something or can be clicked (fork, adb only).
+            "probewin" -> {
+                val id = cmd.getOrNull(1)?.toIntOrNull() ?: return "probewin WINDOW_ID"
+                val root = service.windows.firstOrNull { it.id == id }?.root ?: return "no window $id"
+                var n = 0
+                val queue = ArrayDeque(listOf(root to 0))
+                while (queue.isNotEmpty() && n < 3000) {
+                    val (node, depth) = queue.removeFirst(); n++
+                    val b = Rect().also { node.getBoundsInScreen(it) }
+                    if (node.isClickable || node.isSelected || node.contentDescription != null || node.text != null)
+                        Log.i("BentoBarProbe", "${depth} ${node.className?.toString()?.substringAfterLast('.')} id=${node.viewIdResourceName?.substringAfterLast('/')} " +
+                            "desc='${node.contentDescription?.take(80)}' text='${node.text?.take(60)}' click=${node.isClickable} sel=${node.isSelected} " +
+                            "${b.toShortString()} [${node.actionList.joinToString(",") { a -> a.label?.toString() ?: a.id.toString() }}]")
+                    if (node.className?.contains("WebView") != true) for (i in 0 until node.childCount) node.getChild(i)?.let { queue.addLast(it to depth + 1) }
+                }
+                "$n nodes"
+            }
             "front" -> { updateFront(); "front=${frontApp.value} placed=$appPlaced x=${appStrip.params.x} w=${appStrip.params.width} shown=${appStrip.shown}" }
             // `apppress WINDOW_ID BUTTON [ACTION LABEL…]`: a caption action on any app window, without bringing it forward.
             "apppress" -> {
