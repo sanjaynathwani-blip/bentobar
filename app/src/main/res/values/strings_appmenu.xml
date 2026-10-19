@@ -25,8 +25,10 @@
     <string name="appmenu_tab_next">Next tab</string>
     <string name="appmenu_tab_previous">Previous tab</string>
     <string name="appmenu_tab_loading">Reading Chrome\'s tabs…</string>
-    <string name="appmenu_tab_unreachable">Chrome\'s tab list isn\'t reachable: start tools/chrome-tabs-relay.py in the Linux terminal</string>
+    <string name="appmenu_tab_unreachable">Chrome\'s tab list isn\'t reachable: start tools/menubar-bridge.py in the Linux terminal</string>
     <string name="appmenu_tab_scope">Every Chrome window, in the order the tabs were opened</string>
+    <string name="appmenu_actions">Actions</string>
+    <string name="appmenu_action_unavailable">That action can only be started from the app\'s icon</string>
     <string name="appmenu_look_switch">App menu bar</string>
     <string name="appmenu_look_switch_help">The app in front gets menus right of the clock: its name, Window and Settings</string>
 </resources>

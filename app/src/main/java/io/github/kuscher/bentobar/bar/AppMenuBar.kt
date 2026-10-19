@@ -47,7 +47,7 @@ import androidx.compose.ui.unit.sp
 import io.github.kuscher.bentobar.R
 import io.github.kuscher.bentobar.items.Env
 import io.github.kuscher.bentobar.items.MenuHost
-import io.github.kuscher.bentobar.net.ChromeTabsLink
+import io.github.kuscher.bentobar.net.LocalBridge
 import androidx.compose.runtime.produceState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -63,9 +63,13 @@ data class FrontApp(val windowId: Int, val pkg: String, val label: String)
 
 /** The words of the app menu bar, as popup keys ("app:name"…). */
 enum class AppMenu(val key: String) {
-    NAME("app:name"), WINDOW("app:window"), TAB("app:tab"), SETTINGS("app:settings");
-    /** Whether [app]'s bar has this word: Tab is Chrome's alone (prototype). */
-    fun shownFor(app: FrontApp) = this != TAB || app.pkg == CHROME
+    NAME("app:name"), WINDOW("app:window"), TAB("app:tab"), ACTIONS("app:actions"), SETTINGS("app:settings");
+    /** Whether [app]'s bar has this word: Tab is Chrome's alone (prototype), Actions an app's that publishes some. */
+    fun shownFor(app: FrontApp, hasActions: Boolean) = when (this) {
+        TAB -> app.pkg == CHROME
+        ACTIONS -> hasActions
+        else -> true
+    }
     companion object {
         const val CHROME = "com.android.chrome"
         fun of(key: String?) = entries.firstOrNull { it.key == key }
@@ -177,6 +181,50 @@ class AppWindows(private val service: AccessibilityService) {
         return t.removePrefix("${app.label}: ")
     }
 
+    /**
+     * Starts one of [app]'s quick actions through the launcher, for one whose screen the app keeps to itself (not
+     * exported: only the home screen may start it, on the app's behalf). Opens the app's own right-click menu from its
+     * taskbar icon (the icon's "Shortcut Menu" accessibility action) and clicks the entry named [label]. Slow (waits
+     * for the menu): never on the main thread.
+     */
+    fun runViaTaskbar(app: FrontApp, label: String): Boolean {
+        service.clearCache()
+        val taskbar = runCatching { service.windows }.getOrDefault(emptyList()).firstOrNull { it.title?.toString() == "Taskbar" }?.root
+            ?: return failedQuietly("no taskbar")
+        // The icon's description is the app's name, then its window's when they differ ("Settings Internet Active").
+        val icon = findAll(taskbar) { n -> n.contentDescription?.toString()?.let { it == app.label || it.startsWith("${app.label} ") } == true &&
+            n.actionList.any { it.label?.toString() == "Shortcut Menu" } }.firstOrNull() ?: return failedQuietly("no taskbar icon for ${app.label}")
+        icon.performAction(icon.actionList.first { it.label?.toString() == "Shortcut Menu" }.id)
+        repeat(15) {
+            Thread.sleep(100)
+            service.clearCache()
+            for (w in runCatching { service.windows }.getOrDefault(emptyList())) {
+                val root = w.root ?: continue
+                if (root.packageName?.toString() != taskbar.packageName?.toString()) continue
+                val entry = findAll(root) { it.text?.toString() == label || it.contentDescription?.toString() == label }.firstOrNull() ?: continue
+                var target: AccessibilityNodeInfo? = entry
+                while (target != null && !target.isClickable) target = target.parent
+                if (target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) { Log.i(tag, "quick action '$label' through the taskbar"); return true }
+            }
+        }
+        // The menu came up without that entry (or not at all): close what may be open.
+        service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+        return failedQuietly("'$label' not in ${app.label}'s taskbar menu")
+    }
+
+    private fun failedQuietly(why: String): Boolean { Log.w(tag, "quick action: $why"); return false }
+
+    private fun findAll(root: AccessibilityNodeInfo, match: (AccessibilityNodeInfo) -> Boolean): List<AccessibilityNodeInfo> {
+        val out = mutableListOf<AccessibilityNodeInfo>()
+        val queue = ArrayDeque(listOf(root))
+        while (queue.isNotEmpty() && out.size < 8) {
+            val n = queue.removeFirst()
+            if (match(n)) out += n
+            for (i in 0 until n.childCount) n.getChild(i)?.let(queue::addLast)
+        }
+        return out
+    }
+
     fun appInfo(app: FrontApp) = Env.launch(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.pkg, null)))
     fun notifications(app: FrontApp) = Env.launch(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, app.pkg))
     fun language(app: FrontApp) {
@@ -251,6 +299,8 @@ private object CaptionActions {
 @Composable
 fun AppMenuStrip(
     app: FrontApp,
+    /** The app publishes quick actions: the bar has an Actions word. */
+    hasActions: Boolean,
     look: StripLook,
     heightDp: Dp,
     open: AppMenu?,
@@ -261,11 +311,12 @@ fun AppMenuStrip(
 ) {
     MeasuredStrip(bias = -1f, onWidth = onWidth) {
         Row(Modifier.height(heightDp), verticalAlignment = Alignment.CenterVertically) {
-            for (menu in AppMenu.entries.filter { it.shownFor(app) }) {
+            for (menu in AppMenu.entries.filter { it.shownFor(app, hasActions) }) {
                 val word = when (menu) {
                     AppMenu.NAME -> app.label
                     AppMenu.WINDOW -> stringResource(R.string.appmenu_window)
                     AppMenu.TAB -> stringResource(R.string.appmenu_tab)
+                    AppMenu.ACTIONS -> stringResource(R.string.appmenu_actions)
                     AppMenu.SETTINGS -> stringResource(R.string.appmenu_settings)
                 }
                 MenuWord(word, bold = menu == AppMenu.NAME, look = look, open = open == menu,
@@ -349,21 +400,21 @@ fun AppSettingsMenu(app: FrontApp, windows: AppWindows, host: MenuHost) {
 }
 
 /** What the Tab menu read: Chrome's tabs, or null when the relay to Chrome's debugging socket isn't there. */
-private class ReadTabs(val tabs: List<ChromeTabsLink.Tab>?)
+private class ReadTabs(val tabs: List<LocalBridge.Tab>?)
 
 /**
- * Chrome's open tabs (PROTOTYPE: through Chrome's debugging socket, see [ChromeTabsLink]). Chrome's list doesn't say
+ * Chrome's open tabs (PROTOTYPE: through Chrome's debugging socket, see [LocalBridge]). Chrome's list doesn't say
  * which window a tab is in, so it is every window's, in the order the tabs were opened; the one marked is the front
  * window's current tab (the window's title names it). A click brings that tab to the front; Next and Previous step
  * along the list.
  */
 @Composable
 fun TabMenu(current: String?, host: MenuHost) {
-    val read by produceState<ReadTabs?>(null) { value = ReadTabs(withContext(Dispatchers.IO) { ChromeTabsLink.list() }) }
+    val read by produceState<ReadTabs?>(null) { value = ReadTabs(withContext(Dispatchers.IO) { LocalBridge.chromeTabs() }) }
     val tabs = read?.tabs?.sortedBy { it.id.toIntOrNull() ?: Int.MAX_VALUE }
     // The list is most recently used first: of several tabs with the window's title, the first is the one in front.
     val currentId = read?.tabs?.firstOrNull { it.title == current }?.id
-    fun go(id: String) { host.close(); Thread { ChromeTabsLink.activate(id) }.start() }
+    fun go(id: String) { host.close(); Thread { LocalBridge.activateChromeTab(id) }.start() }
     fun step(by: Int) {
         val list = tabs ?: return
         val at = list.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
@@ -382,5 +433,13 @@ fun TabMenu(current: String?, host: MenuHost) {
             MenuEntry(if (t.id == currentId) Sym.CHECK else Sym.TAB, t.title.ifBlank { t.url }.take(70),
                 sub = Uri.parse(t.url).host?.removePrefix("www.")) { go(t.id) }
         }
+    }
+}
+
+/** The quick actions [app] publishes, as its icon's right-click menu shows them; a click starts one. */
+@Composable
+fun ActionsMenu(app: FrontApp, actions: List<AppAction>, run: (AppAction) -> Unit, host: MenuHost) {
+    MenuCard(Sym.BOLT, stringResource(R.string.appmenu_actions), subtitle = app.label) {
+        for (a in actions) MenuEntry(Sym.BOLT, a.label, image = a.icon) { host.afterClose { run(a) } }
     }
 }

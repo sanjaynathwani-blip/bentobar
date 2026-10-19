@@ -45,7 +45,9 @@ import io.github.kuscher.bentobar.data.TextSize
 import io.github.kuscher.bentobar.items.Caffeine
 import io.github.kuscher.bentobar.items.Chips
 import io.github.kuscher.bentobar.items.DisplaysItem
+import io.github.kuscher.bentobar.R
 import io.github.kuscher.bentobar.items.Env
+import io.github.kuscher.bentobar.net.LocalBridge
 import io.github.kuscher.bentobar.items.Items
 import io.github.kuscher.bentobar.items.MenuHost
 import io.github.kuscher.bentobar.items.Ticker
@@ -144,6 +146,10 @@ class BarController(private val service: AccessibilityService) {
     /** Where each of its words was drawn (its window's coordinates). */
     private val appPlaced = HashMap<AppMenu, Rect>()
     private val readFront = Runnable { updateFront() }
+    /** Each app's quick actions as last read (packages to what they publish), for the Actions word and its menu. */
+    private val actions = mutableStateOf<Map<String, List<AppAction>>>(emptyMap())
+    /** Their own thread: the bridge's shell command takes seconds, which the colour readings on [io] mustn't wait for. */
+    private val actionsIo = Executors.newSingleThreadExecutor()
 
     /** A click outside the strip while hidden items are out folds them away, unless a menu is open (it closes itself). */
     private fun outsideClick() {
@@ -275,6 +281,7 @@ class BarController(private val service: AccessibilityService) {
         Ticker.stop("bar")
         scope.cancel()
         io.shutdown()
+        actionsIo.shutdown()
     }
 
     /** Window events, logged only where asked for: `adb shell setprop log.tag.BentoBarEvents DEBUG`. */
@@ -457,9 +464,26 @@ class BarController(private val service: AccessibilityService) {
         if (app == frontApp.value) return
         val was = frontApp.value
         frontApp.value = app
+        if (app != null) loadActions(app.pkg)
         appPlaced.clear() // the words are placed again for this app (Chrome's bar has one more)
         if (AppMenu.of(menuKey) != null && app?.windowId != was?.windowId) closeMenu()
         check(full = false)
+    }
+
+    /** Starts a quick action: directly, else (a screen the app keeps to itself) through the app's taskbar menu. */
+    private fun runAction(app: FrontApp, a: AppAction) {
+        if (AppActions.run(a)) return
+        runCatching { actionsIo.execute { if (!apps.runViaTaskbar(app, a.label)) main.post { android.widget.Toast.makeText(service, R.string.appmenu_action_unavailable, android.widget.Toast.LENGTH_SHORT).show() } } }
+    }
+
+    /** Reads [pkg]'s quick actions in the background; the bar gets an Actions word once there are some. */
+    private fun loadActions(pkg: String) {
+        runCatching {
+            actionsIo.execute {
+                val found = AppActions.load(service, pkg)
+                main.post { if (started && actions.value[pkg] != found) actions.value = actions.value + (pkg to found) }
+            }
+        }
     }
 
     /**
@@ -483,7 +507,7 @@ class BarController(private val service: AccessibilityService) {
     @Composable
     private fun AppStripHost() {
         val app = frontApp.value ?: return
-        AppMenuStrip(app, look.value, heightDp.value, open = AppMenu.of(menuKey),
+        AppMenuStrip(app, hasActions = !actions.value[app.pkg].isNullOrEmpty(), look.value, heightDp.value, open = AppMenu.of(menuKey),
             onWidth = { w -> if (w != appStripWidth) main.post { appStripWidth = w; check(full = false) } },
             onPlaced = { m, r -> appPlaced[m] = r },
             onClick = { m -> hideTip(); openAppMenu(m, toggle = true) },
@@ -502,6 +526,11 @@ class BarController(private val service: AccessibilityService) {
                 toggleMenu(m.key, at, 320, from = appStrip) { host -> WindowMenu(app, caption, apps, host) }
             }
             AppMenu.SETTINGS -> toggleMenu(m.key, at, 260, from = appStrip) { host -> AppSettingsMenu(app, apps, host) }
+            AppMenu.ACTIONS -> {
+                val list = actions.value[app.pkg].orEmpty()
+                toggleMenu(m.key, at, 300, from = appStrip) { host -> ActionsMenu(app, list, { a -> runAction(app, a) }, host) }
+                loadActions(app.pkg) // what it publishes changes as it runs: fresh for the next time
+            }
             AppMenu.TAB -> {
                 val current = apps.title(app)
                 toggleMenu(m.key, at, 360, from = appStrip) { host -> TabMenu(current, host) }
@@ -1093,8 +1122,27 @@ class BarController(private val service: AccessibilityService) {
                 val id = cmd.getOrNull(1)?.toIntOrNull() ?: return "captionpress CAPTION_ID BUTTON [LABEL]"
                 "pressed=${apps.pressCaption(id, cmd.getOrElse(2) { "" }, cmd.drop(3).joinToString(" ").ifEmpty { null })}"
             }
+            // `actions PACKAGE`: what each source finds of an app's quick actions (slow: the bridge runs a shell command).
+            "actions" -> {
+                val pkg = cmd.getOrNull(1) ?: return "actions PACKAGE"
+                Thread {
+                    val bridge = LocalBridge.shortcuts(pkg)
+                    val all = AppActions.load(service, pkg)
+                    Log.i("BentoBarApps", "actions $pkg: bridge=${bridge?.size} (${bridge?.count { it.dynamic }} dynamic) loaded=${all.size}: " +
+                        all.joinToString { "${if (it.dynamic) "dyn" else "man"}:${it.label}${if (it.icon != null) "+icon" else ""}" })
+                }.start()
+                "reading: see BentoBarApps"
+            }
+            // `actionrun PACKAGE N`: starts that app's Nth quick action, as a click in the Actions menu does.
+            "actionrun" -> {
+                val pkg = cmd.getOrNull(1) ?: return "actionrun PACKAGE N"
+                val n = cmd.getOrNull(2)?.toIntOrNull() ?: 0
+                val app = frontApp.value?.takeIf { it.pkg == pkg } ?: FrontApp(-1, pkg, cmd.drop(3).joinToString(" "))
+                Thread { AppActions.load(service, pkg).getOrNull(n)?.let { a -> main.post { Log.i("BentoBarApps", "run ${a.label}"); runAction(app, a) } } }.start()
+                "running"
+            }
             "appopen" -> {
-                val m = AppMenu.entries.firstOrNull { it.name.equals(cmd.getOrNull(1), ignoreCase = true) } ?: return "appopen name|window|tab|settings"
+                val m = AppMenu.entries.firstOrNull { it.name.equals(cmd.getOrNull(1), ignoreCase = true) } ?: return "appopen name|window|tab|actions|settings"
                 openAppMenu(m); "menu=$menuKey"
             }
             "sample" -> { sampleColor(); "sampling" }
