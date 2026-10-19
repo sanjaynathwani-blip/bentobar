@@ -15,6 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -40,7 +41,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.unit.sp
 import io.github.kuscher.bentobar.R
 import io.github.kuscher.bentobar.items.Env
 import io.github.kuscher.bentobar.items.MenuHost
@@ -197,6 +200,40 @@ class AppWindows(private val service: AccessibilityService) {
 /** What the Window menu needs to know when it opens. */
 data class CaptionState(val maximized: Boolean, val actions: Set<String>)
 
+/**
+ * The Googlebook's own keyboard shortcuts for the Window menu's actions, as its Keyboard shortcuts screen (G + /)
+ * lists them and `dumpsys input` binds them (this device's defaults, 2026-10-19; Customize there can change them,
+ * and an app can't read the changes). "G" is the Googlebook key, as that screen draws it.
+ */
+object WindowShortcuts {
+    val minimize = listOf("G", "-")
+    val maximize = listOf("G", "=")
+    val left = listOf("G", "[")
+    val right = listOf("G", "]")
+    /** "Use full screen". */
+    val fullscreen = listOf("G", "Ctrl", "↑")
+    /** "Use split screen with app on the left". */
+    val split = listOf("G", "Ctrl", "←")
+    /** "Close current window". */
+    val close = listOf("G", "W")
+}
+
+/** A shortcut's keys as small caps at the end of a menu row; the Googlebook key is a bold G. */
+@Composable
+private fun KeyCaps(keys: List<String>, enabled: Boolean) {
+    val color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 1f else 0.38f)
+    Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
+        for (k in keys) Box(
+            Modifier.height(20.dp).widthIn(min = 20.dp).clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)).padding(horizontal = 5.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(k, color = color, fontSize = 11.sp, lineHeight = 11.sp, maxLines = 1,
+                fontWeight = if (k == "G") FontWeight.Bold else FontWeight.Medium)
+        }
+    }
+}
+
 /** SystemUI's own action labels on a caption's maximize button. */
 private object CaptionActions {
     const val LEFT = "Resize app window left"
@@ -283,21 +320,20 @@ fun WindowMenu(app: FrontApp, caption: CaptionState?, windows: AppWindows, host:
         val on = caption != null
         fun has(label: String) = caption?.actions?.contains(label) == true
         fun press(button: String, label: String? = null): () -> Unit = { host.afterClose { windows.press(app, button, label) } }
-        MenuEntry(Sym.MINIMIZE, stringResource(R.string.appmenu_minimize), enabled = on, onClick = press("minimize_window"))
-        MenuEntry(if (caption?.maximized == true) Sym.FILTER_NONE else Sym.CROP_SQUARE,
-            stringResource(if (caption?.maximized == true) R.string.appmenu_restore else R.string.appmenu_maximize),
-            enabled = has(CaptionActions.MAX_OR_RESTORE), onClick = press("maximize_window", CaptionActions.MAX_OR_RESTORE))
-        MenuEntry(Sym.SPLITSCREEN_LEFT, stringResource(R.string.appmenu_snap_left), enabled = has(CaptionActions.LEFT),
-            onClick = press("maximize_window", CaptionActions.LEFT))
-        MenuEntry(Sym.SPLITSCREEN_RIGHT, stringResource(R.string.appmenu_snap_right), enabled = has(CaptionActions.RIGHT),
-            onClick = press("maximize_window", CaptionActions.RIGHT))
-        MenuEntry(Sym.FULLSCREEN, stringResource(R.string.appmenu_fullscreen), enabled = has(CaptionActions.FULLSCREEN),
-            onClick = press("maximize_window", CaptionActions.FULLSCREEN))
-        MenuEntry(Sym.SPLITSCREEN, stringResource(R.string.appmenu_split), enabled = has(CaptionActions.SPLIT),
-            onClick = press("maximize_window", CaptionActions.SPLIT))
+        @Composable fun Entry(icon: String, label: Int, keys: List<String>?, enabled: Boolean, onClick: () -> Unit) =
+            MenuEntry(icon, stringResource(label), enabled = enabled, trailing = keys?.let { { KeyCaps(it, enabled) } }, onClick = onClick)
+        Entry(Sym.MINIMIZE, R.string.appmenu_minimize, WindowShortcuts.minimize, on, press("minimize_window"))
+        Entry(if (caption?.maximized == true) Sym.FILTER_NONE else Sym.CROP_SQUARE,
+            if (caption?.maximized == true) R.string.appmenu_restore else R.string.appmenu_maximize, WindowShortcuts.maximize,
+            has(CaptionActions.MAX_OR_RESTORE), press("maximize_window", CaptionActions.MAX_OR_RESTORE))
+        Entry(Sym.SPLITSCREEN_LEFT, R.string.appmenu_snap_left, WindowShortcuts.left, has(CaptionActions.LEFT), press("maximize_window", CaptionActions.LEFT))
+        Entry(Sym.SPLITSCREEN_RIGHT, R.string.appmenu_snap_right, WindowShortcuts.right, has(CaptionActions.RIGHT), press("maximize_window", CaptionActions.RIGHT))
+        Entry(Sym.FULLSCREEN, R.string.appmenu_fullscreen, WindowShortcuts.fullscreen, has(CaptionActions.FULLSCREEN),
+            press("maximize_window", CaptionActions.FULLSCREEN))
+        Entry(Sym.SPLITSCREEN, R.string.appmenu_split, WindowShortcuts.split, has(CaptionActions.SPLIT), press("maximize_window", CaptionActions.SPLIT))
         MenuDivider()
-        MenuEntry(Sym.MENU, stringResource(R.string.appmenu_window_options), enabled = on, onClick = press("open_menu_button"))
-        MenuEntry(Sym.CLOSE, stringResource(R.string.appmenu_close), enabled = on, onClick = press("close_window"))
+        Entry(Sym.MENU, R.string.appmenu_window_options, null, on, press("open_menu_button"))
+        Entry(Sym.CLOSE, R.string.appmenu_close, WindowShortcuts.close, on, press("close_window"))
     }
 }
 

@@ -499,7 +499,7 @@ class BarController(private val service: AccessibilityService) {
             AppMenu.NAME -> toggleMenu(m.key, at, 260, from = appStrip) { host -> AppNameMenu(app, apps, host) }
             AppMenu.WINDOW -> {
                 val caption = apps.caption(app)
-                toggleMenu(m.key, at, 260, from = appStrip) { host -> WindowMenu(app, caption, apps, host) }
+                toggleMenu(m.key, at, 320, from = appStrip) { host -> WindowMenu(app, caption, apps, host) }
             }
             AppMenu.SETTINGS -> toggleMenu(m.key, at, 260, from = appStrip) { host -> AppSettingsMenu(app, apps, host) }
             AppMenu.TAB -> {
