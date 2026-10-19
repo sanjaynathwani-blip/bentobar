@@ -135,6 +135,16 @@ class BarController(private val service: AccessibilityService) {
 
     private val strip = Overlay(service, "BentoBar", onOutside = { outsideClick() }).apply { params.width = 1; watchOutside(false) }
 
+    // The app menu bar: the app in front's menus in a window of their own, right of the clock (fork).
+    private val apps = AppWindows(service)
+    private val frontApp = mutableStateOf<FrontApp?>(null)
+    private val appStrip = Overlay(service, "BentoBar app menus").apply { params.width = 1 }
+    /** The app menu bar's natural width, as last measured. */
+    private var appStripWidth = 0
+    /** Where each of its words was drawn (its window's coordinates). */
+    private val appPlaced = HashMap<AppMenu, Rect>()
+    private val readFront = Runnable { updateFront() }
+
     /** A click outside the strip while hidden items are out folds them away, unless a menu is open (it closes itself). */
     private fun outsideClick() {
         if (menuKey != null || !expanded.value) return
@@ -244,6 +254,7 @@ class BarController(private val service: AccessibilityService) {
         }
         scope.launch { DisplaysItem.keepingAwake.collect { updateAwake() } }
         scan()
+        main.post(readFront)
         main.postDelayed(poll, 2_000)
     }
 
@@ -259,6 +270,7 @@ class BarController(private val service: AccessibilityService) {
         hideTip()
         main.removeCallbacksAndMessages(null) // after closeMenu, which posts a collapse
         strip.destroy()
+        appStrip.destroy()
         if (screenLock.isHeld) screenLock.release()
         Ticker.stop("bar")
         scope.cancel()
@@ -274,6 +286,8 @@ class BarController(private val service: AccessibilityService) {
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
                 if (Log.isLoggable(EVENTS_TAG, Log.DEBUG)) Log.d(EVENTS_TAG, "windows changed id=${e.windowId} changes=0x${Integer.toHexString(e.windowChanges)} ours=${e.windowId in overlayIds}")
                 if (e.windowId in overlayIds) return // our own windows resizing
+                // Another app in front (or the one in front gone): the app menu bar follows, a moment later.
+                if (e.windowChanges and FRONT_CHANGES != 0) { main.removeCallbacks(readFront); main.postDelayed(readFront, 60) }
                 // Only windows appearing, going or moving can hide or cover the bar; titles, focus
                 // and stacking changes (every page load, every terminal command) can't.
                 if (e.windowChanges and RELEVANT == 0) return
@@ -300,6 +314,7 @@ class BarController(private val service: AccessibilityService) {
         Store.config.value.let { if ((it.hiddenMode == HiddenMode.SHOW_ALL || it.presenting) && expanded.value) { expanded.value = false; pinned = false } }
         applyLook()
         if (Ticker.running) Ticker.refresh()
+        updateFront()
         scan()
         Chips.update(service)
     }
@@ -378,6 +393,7 @@ class BarController(private val service: AccessibilityService) {
             hideTip()
             cancelDrag() // the strip's window goes, and with it the release that would end a drag
             strip.hide()
+            appStrip.hide()
             // Readings still to come were for a strip that is gone: its return asks again.
             watch.clear(); main.removeCallbacks(sample)
             updateAwake()
@@ -390,9 +406,12 @@ class BarController(private val service: AccessibilityService) {
     private var lastPlace = ""
     private fun trace(what: String) { if (tracing) Log.i(tag, "trace ${SystemClock.uptimeMillis() % 100_000} $what") }
 
-    private fun place(s: BarSnapshot, screenW: Int) {
+    private fun place(snapshot: BarSnapshot, screenW: Int) {
         val cfg = Store.config.value
         val gap = (6 * density).toInt()
+        // The app menu bar takes the free area's start, against the clock; the items get what is left of it.
+        val menusEnd = placeAppStrip(snapshot, screenW)
+        val s = if (menusEnd == null) snapshot else snapshot.copy(free = Rect(snapshot.free).apply { left = (menusEnd + gap).coerceAtMost(right) })
         val p = strip.params
         p.height = s.bar.height()
         p.y = s.bar.top
@@ -427,6 +446,76 @@ class BarController(private val service: AccessibilityService) {
             Ticker.start("bar")
             Log.i(tag, "bar shown: bar=${s.bar.toShortString()} free=${s.free.toShortString()} [${s.summary}]")
         } else strip.relayout()
+    }
+
+    // ---- the app menu bar ----------------------------------------------------------------------
+
+    /** Reads which app is in front; a change redraws the app menu bar and closes its popup (it was for the other app). */
+    private fun updateFront() {
+        if (!started) return
+        val app = if (Store.config.value.appMenuBar) apps.read() else null
+        if (app == frontApp.value) return
+        val was = frontApp.value
+        frontApp.value = app
+        if (AppMenu.of(menuKey) != null && app?.windowId != was?.windowId) closeMenu()
+        check(full = false)
+    }
+
+    /**
+     * Shows the app menu bar at the free area's start, right against the clock, and returns where it ends; null when
+     * it isn't shown (switched off, or no app in front). It stays in the screen's left half, 24 dp short of the middle.
+     */
+    private fun placeAppStrip(s: BarSnapshot, screenW: Int): Int? {
+        val app = frontApp.value
+        if (app == null || !Store.config.value.appMenuBar) { appStrip.hide(); appPlaced.clear(); return null }
+        val p = appStrip.params
+        p.gravity = Gravity.TOP or Gravity.LEFT
+        p.height = s.bar.height()
+        p.y = s.bar.top
+        p.x = s.free.left
+        val cap = (screenW / 2 - (24 * density).toInt() - p.x).coerceIn(1, s.free.width().coerceAtLeast(1))
+        p.width = appStripWidth.coerceIn(1, cap)
+        if (!appStrip.shown) appStrip.show { AppStripHost() } else appStrip.relayout()
+        return if (appStrip.shown) p.x + p.width else null
+    }
+
+    @Composable
+    private fun AppStripHost() {
+        val app = frontApp.value ?: return
+        AppMenuStrip(app, look.value, heightDp.value, open = AppMenu.of(menuKey),
+            onWidth = { w -> if (w != appStripWidth) main.post { appStripWidth = w; check(full = false) } },
+            onPlaced = { m, r -> appPlaced[m] = r },
+            onClick = { m -> hideTip(); openAppMenu(m, toggle = true) },
+            // With one of its popups open, pointing at another word opens that one, as in any menu bar.
+            onHover = { m -> if (AppMenu.of(menuKey) != null && menuKey != m.key) openAppMenu(m) })
+    }
+
+    private fun openAppMenu(m: AppMenu, toggle: Boolean = false) {
+        val app = frontApp.value ?: return
+        if (!toggle && menuKey == m.key) return
+        val at = appPlaced[m] ?: Rect(0, 0, 1, appStrip.params.height)
+        when (m) {
+            AppMenu.NAME -> toggleMenu(m.key, at, 260, from = appStrip) { host -> AppNameMenu(app, apps, host) }
+            AppMenu.WINDOW -> {
+                val caption = apps.caption(app)
+                toggleMenu(m.key, at, 260, from = appStrip) { host -> WindowMenu(app, caption, apps, host) }
+            }
+            AppMenu.SETTINGS -> toggleMenu(m.key, at, 260, from = appStrip) { host -> AppSettingsMenu(app, apps, host) }
+        }
+    }
+
+    /** A press outside an app menu's popup: on its own word it folds (that click is spent), on another word it dissolves for that one. */
+    private fun outsideAppMenu(key: String, ev: MotionEvent) {
+        val loc = appStrip.locationOnScreen()
+        val x = (ev.rawX - loc[0]).toInt()
+        val y = ev.rawY - loc[1]
+        val on = (ev.rawX != 0f || ev.rawY != 0f) && appStrip.shown && x >= 0 && x < appStrip.params.width && y >= 0 && y < appStrip.params.height
+        val hit = if (on) appPlaced.entries.firstOrNull { x >= it.value.left && x < it.value.right }?.key?.key else null
+        when (hit) {
+            null -> closeMenu()
+            key -> { spentKey = key; spentAt = SystemClock.uptimeMillis(); closeMenu() }
+            else -> closeMenu(dissolve = true)
+        }
     }
 
     // ---- colour ------------------------------------------------------------------------------
@@ -787,7 +876,7 @@ class BarController(private val service: AccessibilityService) {
      * Opens the popup [key] below [anchor] (strip window coordinates), or closes it if it's open. A popup
      * open for another item dissolves while this one unfolds; one still folding away turns round.
      */
-    fun toggleMenu(key: String, anchor: Rect, widthDp: Int, content: @Composable (MenuHost) -> Unit) {
+    fun toggleMenu(key: String, anchor: Rect, widthDp: Int, from: Overlay = strip, content: @Composable (MenuHost) -> Unit) {
         val now = SystemClock.uptimeMillis()
         hideTip()
         if (menuKey == key) { closeMenu(); return }
@@ -802,7 +891,7 @@ class BarController(private val service: AccessibilityService) {
         }
         closeMenu(dissolve = true) // resets the sampling demand, so the new popup's is set after it
         val s = snap ?: return
-        val loc = strip.locationOnScreen()
+        val loc = from.locationOnScreen()
         val a = Rect(anchor).apply { offset(loc[0], loc[1]) }
         val bounds = wm.currentWindowMetrics.bounds
         val w = (widthDp * density).toInt()
@@ -826,6 +915,7 @@ class BarController(private val service: AccessibilityService) {
      */
     private fun outside(ev: MotionEvent) {
         val key = menuKey ?: return
+        if (AppMenu.of(key) != null) return outsideAppMenu(key, ev)
         val loc = strip.locationOnScreen()
         val x = ev.rawX - loc[0]
         val y = ev.rawY - loc[1]
@@ -969,14 +1059,63 @@ class BarController(private val service: AccessibilityService) {
                 val r = Rect().also { w.getBoundsInScreen(it) }
                 "${w.id}:t${w.type}:${w.title}:${r.toShortString()}"
             }
+            "probe" -> probeWindows()
+            "front" -> { updateFront(); "front=${frontApp.value} placed=$appPlaced x=${appStrip.params.x} w=${appStrip.params.width} shown=${appStrip.shown}" }
+            // `apppress WINDOW_ID BUTTON [ACTION LABEL…]`: a caption action on any app window, without bringing it forward.
+            "apppress" -> {
+                val id = cmd.getOrNull(1)?.toIntOrNull() ?: return "apppress WINDOW_ID BUTTON [LABEL]"
+                val ok = apps.press(FrontApp(id, "", ""), cmd.getOrElse(2) { "" }, cmd.drop(3).joinToString(" ").ifEmpty { null })
+                "pressed=$ok"
+            }
+            "captionpress" -> {
+                val id = cmd.getOrNull(1)?.toIntOrNull() ?: return "captionpress CAPTION_ID BUTTON [LABEL]"
+                "pressed=${apps.pressCaption(id, cmd.getOrElse(2) { "" }, cmd.drop(3).joinToString(" ").ifEmpty { null })}"
+            }
+            "appopen" -> {
+                val m = AppMenu.entries.firstOrNull { it.name.equals(cmd.getOrNull(1), ignoreCase = true) } ?: return "appopen name|window|settings"
+                openAppMenu(m); "menu=$menuKey"
+            }
             "sample" -> { sampleColor(); "sampling" }
             "trace" -> { tracing = cmd.getOrNull(1) != "off"; "trace=$tracing" }
             else -> "unknown"
         }
     }
 
+    /**
+     * Menu bar feasibility probe (fork only, adb only): every listed window with its owner, and the nodes in the top
+     * 80 px of each app-sized window (where a caption's buttons would be), one log line each under BentoBarProbe.
+     */
+    private fun probeWindows(): String {
+        val out = mutableListOf<String>()
+        for ((display, list) in service.windowsOnAllDisplays.let { a -> (0 until a.size()).map { a.keyAt(it) to a.valueAt(it) } }) {
+            for (w in list) {
+                val r = Rect().also { w.getBoundsInScreen(it) }
+                val root = try { w.root } catch (_: Exception) { null }
+                out += "d$display w${w.id} t${w.type} layer=${w.layer} active=${w.isActive} focused=${w.isFocused} " +
+                    "title='${w.title}' pkg=${root?.packageName} bounds=${r.toShortString()} children=${w.childCount}"
+                if (root == null || w.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue
+                val queue = ArrayDeque(listOf(root to 0))
+                var seen = 0
+                while (queue.isNotEmpty() && seen < 400) {
+                    val (n, depth) = queue.removeFirst(); seen++
+                    val b = Rect().also { n.getBoundsInScreen(it) }
+                    val actions = n.actionList.joinToString(",") { a -> a.label?.toString() ?: a.id.toString() }
+                    if (b.top < r.top + 80 && (n.isClickable || n.contentDescription != null || n.text != null || n.viewIdResourceName != null))
+                        out += "    ${"  ".repeat(depth.coerceAtMost(8))}${n.className?.toString()?.substringAfterLast('.')} " +
+                            "id=${n.viewIdResourceName?.substringAfterLast('/')} desc='${n.contentDescription}' text='${n.text?.take(40)}' " +
+                            "click=${n.isClickable} ${b.toShortString()} [$actions]"
+                    if (depth < 30) for (i in 0 until n.childCount) n.getChild(i)?.let { queue.addLast(it to depth + 1) }
+                }
+            }
+        }
+        out.forEach { Log.i("BentoBarProbe", it) }
+        return "${out.size} lines under BentoBarProbe"
+    }
+
     companion object {
         private const val TOOLTIP_MAX_DP = 360
+        private const val FRONT_CHANGES = AccessibilityEvent.WINDOWS_CHANGE_ACTIVE or AccessibilityEvent.WINDOWS_CHANGE_FOCUSED or
+            AccessibilityEvent.WINDOWS_CHANGE_ADDED or AccessibilityEvent.WINDOWS_CHANGE_REMOVED
         private const val RELEVANT = AccessibilityEvent.WINDOWS_CHANGE_ADDED or AccessibilityEvent.WINDOWS_CHANGE_REMOVED or
             AccessibilityEvent.WINDOWS_CHANGE_BOUNDS
     }

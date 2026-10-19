@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- British spellings of strings_appmenu.xml. -->
+<resources>
+    <string name="appmenu_minimize">Minimise</string>
+    <string name="appmenu_maximize">Maximise</string>
+</resources>

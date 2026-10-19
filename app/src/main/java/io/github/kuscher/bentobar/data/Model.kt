@@ -103,6 +103,8 @@ data class BarConfig(
     val spacing: Int = 12,
     /** With a popup open, pointing at another item opens its popup, as in a menu bar. Off: nothing opens on hover by itself. */
     val hoverSwitchesPopups: Boolean = false,
+    /** The app menu bar (fork): the app in front's menus (its name, Window, Settings) right of the clock. */
+    val appMenuBar: Boolean = true,
     /** "No animations": BentoBar's popups, highlight and items appear and go at once (`ui/Motion`). */
     val noAnimations: Boolean = false,
     /** "Tint with system colors": the popups' glass takes a tint of the system's (wallpaper's) palette. Off: neutral glass. */

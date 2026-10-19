@@ -182,6 +182,9 @@ fun LookPage() {
             Pill.SUBTLE to stringResource(R.string.look_pill_subtle), Pill.SOLID to stringResource(R.string.look_pill_solid)), cfg.pill) { v ->
             Store.update { it.copy(pill = v) }
         }
+        SwitchRow(stringResource(R.string.appmenu_look_switch), cfg.appMenuBar, help = stringResource(R.string.appmenu_look_switch_help)) { on ->
+            Store.update { it.copy(appMenuBar = on) }
+        }
         SwitchRow(stringResource(R.string.look_hover_switch), cfg.hoverSwitchesPopups, help = stringResource(R.string.look_hover_switch_help)) { on ->
             Store.update { it.copy(hoverSwitchesPopups = on) }
         }

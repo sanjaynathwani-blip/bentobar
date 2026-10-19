@@ -42,6 +42,8 @@ android {
         // `-PreleaseSignedDebug`: a debug build signed with the release key, so it installs over a released BentoBar on
         // a test device and keeps its layout and its accessibility switch (same id, same key, same version code).
         if (project.hasProperty("releaseSignedDebug")) debug { signingConfig = signingConfigs.getByName("release") }
+        // Menu bar fork: debug builds install beside a released BentoBar, as their own app.
+        debug { applicationIdSuffix = ".menubar" }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

@@ -1,0 +1,297 @@
+package io.github.kuscher.bentobar.bar
+
+import android.accessibilityservice.AccessibilityService
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Rect
+import android.net.Uri
+import android.provider.Settings
+import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
+import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect as ComposeRect
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.material3.Text
+import io.github.kuscher.bentobar.R
+import io.github.kuscher.bentobar.items.Env
+import io.github.kuscher.bentobar.items.MenuHost
+import io.github.kuscher.bentobar.ui.MenuCard
+import io.github.kuscher.bentobar.ui.MenuDivider
+import io.github.kuscher.bentobar.ui.MenuEntry
+import io.github.kuscher.bentobar.util.Fonts
+import io.github.kuscher.bentobar.util.Sym
+
+/** The app the menu bar is for: its window, package and name. */
+@Immutable
+data class FrontApp(val windowId: Int, val pkg: String, val label: String)
+
+/** The words of the app menu bar, as popup keys ("app:name"…). */
+enum class AppMenu(val key: String) {
+    NAME("app:name"), WINDOW("app:window"), SETTINGS("app:settings");
+    companion object { fun of(key: String?) = entries.firstOrNull { it.key == key } }
+}
+
+/**
+ * The app in front, and what can be done to its window. This reads more than the rest of BentoBar does: which
+ * application window is active, that window's package (its root node's package name, nothing of what it shows),
+ * and the caption SystemUI draws above it, whose buttons it presses for the Window menu.
+ */
+class AppWindows(private val service: AccessibilityService) {
+    private val tag = "BentoBarApps"
+    private val packages = HashMap<Int, String>()
+    private var following: Int? = null
+    private var last: FrontApp? = null
+    private val home: String? by lazy {
+        service.packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo?.packageName
+    }
+
+    private fun seen(w: AccessibilityWindowInfo): SeenWindow {
+        val r = Rect().also { w.getBoundsInScreen(it) }
+        return SeenWindow(w.id, w.type, w.isActive, w.isFocused, r.left, r.top, r.right, r.bottom)
+    }
+
+    /** The app in front now; null for none (the home screen). Cheap: the window list, and a package read once per window. */
+    fun read(): FrontApp? {
+        val list = runCatching { service.windows }.getOrDefault(emptyList())
+        val seen = list.map(::seen)
+        val id = FrontAppRules.next(seen, following) ?: return null
+        following = id
+        val w = list.firstOrNull { it.id == id } ?: return last // the list ended early: keep what we had
+        if (packages.size > 64) packages.clear()
+        val pkg = packages[id] ?: runCatching { w.root?.packageName?.toString() }.getOrNull()?.also { packages[id] = it } ?: return last
+        val hasCaption = FrontAppRules.caption(seen, seen(w)) != null
+        // The home screen has no caption: no menus for it. A full-screen app has none either, but it is an app.
+        if (!hasCaption && pkg == home) { last = null; return null }
+        if (pkg == service.packageName) return last // our own settings window: the menus stay with the app before it
+        return FrontApp(id, pkg, label(pkg)).also { last = it }
+    }
+
+    private fun label(pkg: String): String = runCatching {
+        service.packageManager.run { getApplicationLabel(getApplicationInfo(pkg, 0)).toString() }
+    }.getOrDefault(pkg)
+
+    /** The caption's node tree for [app]'s window, read fresh. Null when it has none (full screen) or it went. */
+    private fun captionRoot(app: FrontApp): AccessibilityNodeInfo? {
+        service.clearCache()
+        val list = runCatching { service.windows }.getOrDefault(emptyList())
+        val seen = list.map(::seen)
+        val window = seen.firstOrNull { it.id == app.windowId } ?: return null
+        val caption = FrontAppRules.caption(seen, window) ?: return null
+        return list.firstOrNull { it.id == caption.id }?.root
+    }
+
+    private fun find(root: AccessibilityNodeInfo, viewId: String): AccessibilityNodeInfo? {
+        val queue = ArrayDeque(listOf(root))
+        while (queue.isNotEmpty()) {
+            val n = queue.removeFirst()
+            if (n.viewIdResourceName?.endsWith("/$viewId") == true) return n
+            for (i in 0 until n.childCount) n.getChild(i)?.let(queue::addLast)
+        }
+        return null
+    }
+
+    /** Whether [app]'s window has a caption to work with, and whether it is maximized (its button says "Restore"). */
+    fun caption(app: FrontApp): CaptionState? {
+        val root = captionRoot(app) ?: return null
+        val max = find(root, "maximize_window")
+        val restore = max?.contentDescription?.startsWith("Restore") == true
+        return CaptionState(maximized = restore, actions = max?.actionList?.mapNotNull { it.label?.toString() }.orEmpty().toSet())
+    }
+
+    /**
+     * Presses a caption button of [app]'s window: [button] is its view id ("minimize_window"), [label] one of its
+     * own accessibility actions ("Resize app window left"), or a plain click without one. The labels are SystemUI's
+     * English ones (this device's); another language wouldn't find them.
+     */
+    fun press(app: FrontApp, button: String, label: String? = null): Boolean = pressIn(captionRoot(app), button, label)
+
+    /** As [press], on the caption window [captionId] itself (adb tests: a window behind others may be missing from the list). */
+    fun pressCaption(captionId: Int, button: String, label: String? = null): Boolean {
+        service.clearCache()
+        return pressIn(runCatching { service.windows }.getOrDefault(emptyList()).firstOrNull { it.id == captionId }?.root, button, label)
+    }
+
+    /**
+     * SystemUI's caption answers its own actions with false even when it carries them out (a restore did restore),
+     * so what performAction says is only logged: a button or action that isn't there is the one failure we can see.
+     */
+    private fun pressIn(root: AccessibilityNodeInfo?, button: String, label: String?): Boolean {
+        val node = root?.let { find(it, button) } ?: return failed("no $button")
+        val said = if (label == null) node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        else node.actionList.firstOrNull { it.label?.toString() == label }?.let { node.performAction(it.id) } ?: return failed("no '$label' on $button")
+        Log.i(tag, "window action $button ${label ?: "click"} (performAction said $said)")
+        return true
+    }
+
+    private fun failed(why: String): Boolean {
+        Log.w(tag, "window action: $why")
+        Toast.makeText(service, R.string.appmenu_action_failed, Toast.LENGTH_SHORT).show()
+        return false
+    }
+
+    fun appInfo(app: FrontApp) = Env.launch(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.pkg, null)))
+    fun notifications(app: FrontApp) = Env.launch(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, app.pkg))
+    fun language(app: FrontApp) {
+        if (!Env.launch(Intent(Settings.ACTION_APP_LOCALE_SETTINGS, Uri.fromParts("package", app.pkg, null)), quiet = true)) appInfo(app)
+    }
+    /** The permissions page itself is only for apps that may grant permissions; everyone else gets App info, where it is one click away. */
+    fun permissions(app: FrontApp) {
+        val direct = Intent("android.intent.action.MANAGE_APP_PERMISSIONS").putExtra("android.intent.extra.PACKAGE_NAME", app.pkg)
+        if (!Env.launch(direct, quiet = true)) appInfo(app)
+    }
+    fun openByDefault(app: FrontApp) {
+        if (!Env.launch(Intent(Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS, Uri.fromParts("package", app.pkg, null)), quiet = true)) appInfo(app)
+    }
+    /** A new window of the app: its launcher activity in a task of its own (apps that allow only one window come to the front). */
+    fun newWindow(app: FrontApp) {
+        val launch = service.packageManager.getLaunchIntentForPackage(app.pkg) ?: return Unit.also { failed("no launcher entry") }
+        Env.launch(launch.addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT))
+    }
+}
+
+/** What the Window menu needs to know when it opens. */
+data class CaptionState(val maximized: Boolean, val actions: Set<String>)
+
+/** SystemUI's own action labels on a caption's maximize button. */
+private object CaptionActions {
+    const val LEFT = "Resize app window left"
+    const val RIGHT = "Resize app window right"
+    const val MAX_OR_RESTORE = "Maximize or restore window size"
+    const val FULLSCREEN = "Enter Fullscreen"
+    const val SPLIT = "Enter Split Screen"
+}
+
+/**
+ * The app menu bar's words, right of the clock: the app's name (semibold, as a menu bar's first word is) and then
+ * Window and Settings. Each opens its popup; with one open, pointing at another opens that one ([onHover]), as in a
+ * menu bar, whatever "Switch popups on hover" says for the items.
+ */
+@Composable
+fun AppMenuStrip(
+    app: FrontApp,
+    look: StripLook,
+    heightDp: Dp,
+    open: AppMenu?,
+    onWidth: (Int) -> Unit,
+    onPlaced: (AppMenu, Rect) -> Unit,
+    onClick: (AppMenu) -> Unit,
+    onHover: (AppMenu) -> Unit,
+) {
+    MeasuredStrip(bias = -1f, onWidth = onWidth) {
+        Row(Modifier.height(heightDp), verticalAlignment = Alignment.CenterVertically) {
+            for (menu in AppMenu.entries) {
+                val word = when (menu) {
+                    AppMenu.NAME -> app.label
+                    AppMenu.WINDOW -> stringResource(R.string.appmenu_window)
+                    AppMenu.SETTINGS -> stringResource(R.string.appmenu_settings)
+                }
+                MenuWord(word, bold = menu == AppMenu.NAME, look = look, open = open == menu,
+                    onPlaced = { onPlaced(menu, it) }, onClick = { onClick(menu) }, onHover = { onHover(menu) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun MenuWord(word: String, bold: Boolean, look: StripLook, open: Boolean, onPlaced: (Rect) -> Unit, onClick: () -> Unit, onHover: () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    val hovered by source.collectIsHoveredAsState()
+    LaunchedEffect(hovered) { if (hovered) onHover() }
+    Box(
+        Modifier.fillMaxHeight()
+            .onGloballyPositioned { c -> c.boundsInWindow().let { r: ComposeRect -> onPlaced(Rect(r.left.toInt(), r.top.toInt(), r.right.toInt(), r.bottom.toInt())) } }
+            .hoverable(source)
+            .clickable(interactionSource = source, indication = null, role = Role.DropdownList, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier.height(24.dp).clip(RoundedCornerShape(50))
+                .background(if (hovered || open) look.fg.copy(alpha = 0.14f) else androidx.compose.ui.graphics.Color.Transparent)
+                .padding(horizontal = 10.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(word, color = look.fg, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp),
+                style = TextStyle(fontFamily = Fonts.bar, fontWeight = if (bold) FontWeight.SemiBold else Fonts.barWeight,
+                    fontSize = look.textSp, lineHeight = look.textSp))
+        }
+    }
+}
+
+/** The app's own menu: App info, Screenshot, a new window. */
+@Composable
+fun AppNameMenu(app: FrontApp, windows: AppWindows, host: MenuHost) {
+    MenuCard(Sym.DESKTOP_WINDOWS, app.label) {
+        MenuEntry(Sym.INFO, stringResource(R.string.appmenu_app_info)) { host.close(); windows.appInfo(app) }
+        MenuEntry(Sym.SCREENSHOT_MONITOR, stringResource(R.string.appmenu_screenshot)) {
+            host.afterClose { Env.global(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT) }
+        }
+        MenuDivider()
+        MenuEntry(Sym.NEW_WINDOW, stringResource(R.string.appmenu_new_window)) { host.close(); windows.newWindow(app) }
+    }
+}
+
+/** The Window menu: the window's caption buttons, by name. [caption] is null for a window without one. */
+@Composable
+fun WindowMenu(app: FrontApp, caption: CaptionState?, windows: AppWindows, host: MenuHost) {
+    MenuCard(Sym.DESKTOP_WINDOWS, stringResource(R.string.appmenu_window), subtitle = if (caption == null) stringResource(R.string.appmenu_no_caption) else null) {
+        val on = caption != null
+        fun has(label: String) = caption?.actions?.contains(label) == true
+        fun press(button: String, label: String? = null): () -> Unit = { host.afterClose { windows.press(app, button, label) } }
+        MenuEntry(Sym.MINIMIZE, stringResource(R.string.appmenu_minimize), enabled = on, onClick = press("minimize_window"))
+        MenuEntry(if (caption?.maximized == true) Sym.FILTER_NONE else Sym.CROP_SQUARE,
+            stringResource(if (caption?.maximized == true) R.string.appmenu_restore else R.string.appmenu_maximize),
+            enabled = has(CaptionActions.MAX_OR_RESTORE), onClick = press("maximize_window", CaptionActions.MAX_OR_RESTORE))
+        MenuEntry(Sym.SPLITSCREEN_LEFT, stringResource(R.string.appmenu_snap_left), enabled = has(CaptionActions.LEFT),
+            onClick = press("maximize_window", CaptionActions.LEFT))
+        MenuEntry(Sym.SPLITSCREEN_RIGHT, stringResource(R.string.appmenu_snap_right), enabled = has(CaptionActions.RIGHT),
+            onClick = press("maximize_window", CaptionActions.RIGHT))
+        MenuEntry(Sym.FULLSCREEN, stringResource(R.string.appmenu_fullscreen), enabled = has(CaptionActions.FULLSCREEN),
+            onClick = press("maximize_window", CaptionActions.FULLSCREEN))
+        MenuEntry(Sym.SPLITSCREEN, stringResource(R.string.appmenu_split), enabled = has(CaptionActions.SPLIT),
+            onClick = press("maximize_window", CaptionActions.SPLIT))
+        MenuDivider()
+        MenuEntry(Sym.MENU, stringResource(R.string.appmenu_window_options), enabled = on, onClick = press("open_menu_button"))
+        MenuEntry(Sym.CLOSE, stringResource(R.string.appmenu_close), enabled = on, onClick = press("close_window"))
+    }
+}
+
+/** The app's settings pages in Android's Settings, one click each. */
+@Composable
+fun AppSettingsMenu(app: FrontApp, windows: AppWindows, host: MenuHost) {
+    MenuCard(Sym.SETTINGS, stringResource(R.string.appmenu_settings), subtitle = app.label) {
+        MenuEntry(Sym.NOTIFICATIONS, stringResource(R.string.appmenu_notifications)) { host.close(); windows.notifications(app) }
+        MenuEntry(Sym.LANGUAGE, stringResource(R.string.appmenu_language)) { host.close(); windows.language(app) }
+        MenuEntry(Sym.SHIELD, stringResource(R.string.appmenu_permissions)) { host.close(); windows.permissions(app) }
+        MenuEntry(Sym.LINK, stringResource(R.string.appmenu_open_by_default)) { host.close(); windows.openByDefault(app) }
+    }
+}
