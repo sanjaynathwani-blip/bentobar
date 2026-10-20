@@ -211,26 +211,42 @@ class AppWindows(private val service: AccessibilityService) {
         fun launcherWindows() = runCatching { service.windows }.getOrDefault(emptyList()).filter { it.root?.packageName?.toString() == launcher }
         val before = launcherWindows().map { it.id }.toSet()
         var menuOpened = false
+        var unfolded = false
         icon.performAction(icon.actionList.first { it.label?.toString() == "Shortcut Menu" }.id)
-        repeat(15) {
+        repeat(20) {
             Thread.sleep(100)
             service.clearCache()
             for (w in launcherWindows()) {
                 val root = w.root ?: continue
                 if (w.id !in before) menuOpened = true
-                val entry = findAll(root) { it.text?.toString() == label || it.contentDescription?.toString() == label }.firstOrNull() ?: continue
+                val entry = findAll(root) { it.text?.toString() == label || it.contentDescription?.toString() == label }.firstOrNull()
+                if (entry == null) {
+                    // The launcher may fold the app's own shortcuts under a toggle (the menu then lies inside the
+                    // taskbar's window, not in one of its own): open that once and look again.
+                    if (!unfolded) findAll(root) { n -> n.actionList.any { it.label?.toString() == UNFOLD } }.firstOrNull()?.let { t ->
+                        unfolded = true
+                        t.performAction(t.actionList.first { it.label?.toString() == UNFOLD }.id)
+                    }
+                    continue
+                }
                 var target: AccessibilityNodeInfo? = entry
                 while (target != null && !target.isClickable) target = target.parent
                 if (target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) { Log.i(tag, "quick action '$label' through the taskbar"); return true }
             }
         }
         // The menu came up without that entry: close it. Only a window of its own that came up is closed this way, so
-        // Back never goes to the app in front when no menu opened.
+        // Back never goes to the app in front when no menu opened. A menu inside the taskbar's window stays open: it
+        // offers nothing that closes it, and Back would go to the app in front.
         if (menuOpened) service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
         return failedQuietly("'$label' not in ${app.label}'s taskbar menu")
     }
 
     private fun failedQuietly(why: String): Boolean { Log.w(tag, "quick action: $why"); return false }
+
+    private companion object {
+        /** The launcher's label for the toggle that shows an app's own shortcuts in its taskbar menu (English only). */
+        const val UNFOLD = "Show app shortcuts menu"
+    }
 
     private fun findAll(root: AccessibilityNodeInfo, match: (AccessibilityNodeInfo) -> Boolean): List<AccessibilityNodeInfo> {
         val out = mutableListOf<AccessibilityNodeInfo>()

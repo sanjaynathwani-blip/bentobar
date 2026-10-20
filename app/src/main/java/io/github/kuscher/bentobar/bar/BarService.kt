@@ -1125,16 +1125,16 @@ class BarController(private val service: AccessibilityService) {
                 "${w.id}:t${w.type}:${w.title}:${r.toShortString()}"
             }
             "probe" -> probeWindows()
-            // `probewin WINDOW_ID`: every node of one window that says something or can be clicked (fork, adb only).
+            // `probewin WINDOW_ID [all]`: every node of one window that says something or can be clicked, or every node (fork, adb only).
             "probewin" -> {
-                val id = cmd.getOrNull(1)?.toIntOrNull() ?: return "probewin WINDOW_ID"
+                val id = cmd.getOrNull(1)?.toIntOrNull() ?: return "probewin WINDOW_ID [all]"
                 val root = service.windows.firstOrNull { it.id == id }?.root ?: return "no window $id"
                 var n = 0
                 val queue = ArrayDeque(listOf(root to 0))
                 while (queue.isNotEmpty() && n < 3000) {
                     val (node, depth) = queue.removeFirst(); n++
                     val b = Rect().also { node.getBoundsInScreen(it) }
-                    if (node.isClickable || node.isSelected || node.contentDescription != null || node.text != null)
+                    if (cmd.getOrNull(2) == "all" || node.isClickable || node.isSelected || node.contentDescription != null || node.text != null)
                         Log.i("BentoBarProbe", "${depth} ${node.className?.toString()?.substringAfterLast('.')} id=${node.viewIdResourceName?.substringAfterLast('/')} " +
                             "desc='${node.contentDescription?.take(80)}' text='${node.text?.take(60)}' click=${node.isClickable} sel=${node.isSelected} " +
                             "${b.toShortString()} [${node.actionList.joinToString(",") { a -> a.label?.toString() ?: a.id.toString() }}]")
@@ -1170,6 +1170,13 @@ class BarController(private val service: AccessibilityService) {
                 val n = cmd.getOrNull(2)?.toIntOrNull() ?: 0
                 val app = frontApp.value?.takeIf { it.pkg == pkg } ?: FrontApp(-1, pkg, cmd.drop(3).joinToString(" "))
                 Thread { AppActions.load(service, pkg).getOrNull(n)?.let { a -> main.post { Log.i("BentoBarApps", "run ${a.label}"); runAction(app, a) } } }.start()
+                "running"
+            }
+            // `taskbarrun LABEL…`: starts the app in front's quick action named LABEL through its taskbar menu.
+            "taskbarrun" -> {
+                val app = frontApp.value ?: return "no app in front"
+                val label = cmd.drop(1).joinToString(" ")
+                actionsIo.execute { Log.i("BentoBarApps", "taskbarrun '$label': ${apps.runViaTaskbar(app, label)}") }
                 "running"
             }
             "appopen" -> {
