@@ -7,6 +7,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import io.github.kuscher.bentobar.BuildConfig
 import java.io.ByteArrayOutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -20,8 +21,13 @@ import java.net.Socket
  * - An app's dynamic quick actions, for the Actions menu: only the shell and the home screen may read them; the
  *   bridge answers on [SHORTCUTS_PORT].
  * This file opens nothing else: only those two ports at the loopback address.
+ *
+ * Debug builds only ([ENABLED]). On a device with no bridge running, any app could listen on those ports, learn
+ * which app is in front from each request and answer with intents of its choosing: a release build never connects.
  */
 object LocalBridge {
+    /** Whether the bridge is asked at all: debug builds only. A release build's every call answers null at once. */
+    val ENABLED = BuildConfig.DEBUG
     const val CHROME_PORT = 39222
     const val SHORTCUTS_PORT = 39223
     private const val HOST = "127.0.0.1"
@@ -82,7 +88,7 @@ object LocalBridge {
     private fun unescape(s: String) = s.replace("&#39;", "'").replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
 
     /** [hostHeader]: Chrome answers only a request that names a local host. */
-    private fun get(port: Int, path: String, hostHeader: String): String? = runCatching {
+    private fun get(port: Int, path: String, hostHeader: String): String? = if (!ENABLED) null else runCatching {
         require(port == CHROME_PORT || port == SHORTCUTS_PORT)
         Socket().use { s ->
             s.connect(InetSocketAddress(HOST, port), 800)

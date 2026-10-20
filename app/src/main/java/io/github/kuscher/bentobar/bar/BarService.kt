@@ -146,6 +146,8 @@ class BarController(private val service: AccessibilityService) {
     /** Where each of its words was drawn (its window's coordinates). */
     private val appPlaced = HashMap<AppMenu, Rect>()
     private val readFront = Runnable { updateFront() }
+    /** Looks again at a front window that couldn't be read yet (its tree comes a moment after it is added), a few times. */
+    private var frontRetries = 0
     /** Each app's quick actions as last read (packages to what they publish), for the Actions word and its menu. */
     private val actions = mutableStateOf<Map<String, List<AppAction>>>(emptyMap())
     /** Their own thread: the bridge's shell command takes seconds, which the colour readings on [io] mustn't wait for. */
@@ -457,10 +459,16 @@ class BarController(private val service: AccessibilityService) {
 
     // ---- the app menu bar ----------------------------------------------------------------------
 
-    /** Reads which app is in front; a change redraws the app menu bar and closes its popup (it was for the other app). */
+    /**
+     * Reads which app is in front; a change redraws the app menu bar and closes its popup (it was for the other app).
+     * Presenting shows no menus: only a running timer or a meeting about to start.
+     */
     private fun updateFront() {
         if (!started) return
-        val app = if (Store.config.value.appMenuBar) apps.read() else null
+        val cfg = Store.config.value
+        val app = if (cfg.appMenuBar && !cfg.presenting) apps.read() else null
+        if (app == null && apps.unreadable && frontRetries < 5) { frontRetries++; main.removeCallbacks(readFront); main.postDelayed(readFront, 250) }
+        else if (!apps.unreadable) frontRetries = 0
         if (app == frontApp.value) return
         val was = frontApp.value
         frontApp.value = app
@@ -481,27 +489,34 @@ class BarController(private val service: AccessibilityService) {
         runCatching {
             actionsIo.execute {
                 val found = AppActions.load(service, pkg)
-                main.post { if (started && actions.value[pkg] != found) actions.value = actions.value + (pkg to found) }
+                // AppAction holds an Intent and a bitmap, which compare as objects: compare what they say instead.
+                fun List<AppAction>.said() = map { Triple(it.label, it.dynamic, it.intent.toUri(0)) }
+                main.post { if (started && actions.value[pkg]?.said() != found.said()) actions.value = actions.value + (pkg to found) }
             }
         }
     }
 
     /**
      * Shows the app menu bar at the free area's start, right against the clock, and returns where it ends; null when
-     * it isn't shown (switched off, or no app in front). It stays in the screen's left half, 24 dp short of the middle.
+     * it isn't shown (switched off, presenting, or no app in front). It stays in the screen's left half, 24 dp short of
+     * the middle, and isn't shown at all with less than [MIN_MENU_ROOM_DP] there. Before its first measure its window is
+     * invisible, as an empty item strip's is, so no pixel-wide overlay is ever left on screen.
      */
     private fun placeAppStrip(s: BarSnapshot, screenW: Int): Int? {
         val app = frontApp.value
-        if (app == null || !Store.config.value.appMenuBar) { appStrip.hide(); appPlaced.clear(); return null }
+        val cfg = Store.config.value
+        val room = minOf(screenW / 2 - (24 * density).toInt() - s.free.left, s.free.width())
+        if (app == null || !cfg.appMenuBar || cfg.presenting || room < MIN_MENU_ROOM_DP * density) { appStrip.hide(); appPlaced.clear(); return null }
         val p = appStrip.params
         p.gravity = Gravity.TOP or Gravity.LEFT
         p.height = s.bar.height()
         p.y = s.bar.top
         p.x = s.free.left
-        val cap = (screenW / 2 - (24 * density).toInt() - p.x).coerceIn(1, s.free.width().coerceAtLeast(1))
-        p.width = appStripWidth.coerceIn(1, cap)
+        val measured = appStripWidth > 0
+        p.width = if (measured) appStripWidth.coerceAtMost(room) else 1
         if (!appStrip.shown) appStrip.show { AppStripHost() } else appStrip.relayout()
-        return if (appStrip.shown) p.x + p.width else null
+        appStrip.setContentVisible(measured)
+        return if (appStrip.shown && measured) p.x + p.width else null
     }
 
     @Composable
@@ -1184,6 +1199,8 @@ class BarController(private val service: AccessibilityService) {
 
     companion object {
         private const val TOOLTIP_MAX_DP = 360
+        /** Less room than this right of the clock (an app's name and one word) and the app menu bar isn't shown. */
+        private const val MIN_MENU_ROOM_DP = 96
         private const val FRONT_CHANGES = AccessibilityEvent.WINDOWS_CHANGE_ACTIVE or AccessibilityEvent.WINDOWS_CHANGE_FOCUSED or
             AccessibilityEvent.WINDOWS_CHANGE_ADDED or AccessibilityEvent.WINDOWS_CHANGE_REMOVED
         private const val RELEVANT = AccessibilityEvent.WINDOWS_CHANGE_ADDED or AccessibilityEvent.WINDOWS_CHANGE_REMOVED or

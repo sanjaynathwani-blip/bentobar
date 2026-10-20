@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Least privilege: BentoBar subscribes only to "windows changed" (which windows exist and where; no
-  app content), reads only the status bar window (re-reading it every 2 s while shown, for icons that
-  come and go), and never filters keys or observes motion events. canTakeScreenshot is used for one
+  app content), reads the status bar window (re-reading it every 2 s while shown, for icons that
+  come and go), and never filters keys or observes motion events. With the app menu bar on (a Look
+  switch) it also reads which app window is active, its package name, and SystemUI's caption over it
+  (whose buttons the Window menu presses), plus the taskbar's icon menu when a quick action is started
+  through it; never what an app shows inside its window. canTakeScreenshot is used for one
   thing: a screenshot of the status bar WINDOW (not the screen) to copy its text colour.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"

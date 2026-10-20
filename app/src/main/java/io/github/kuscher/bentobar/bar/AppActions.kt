@@ -26,7 +26,7 @@ data class AppAction(val label: String, val icon: ImageBitmap?, val intent: Inte
  * - The prototype bridge ([LocalBridge.shortcuts]), which has what only the home screen and the shell may read: the
  *   ones published while running, and which shortcuts Android has enabled, in the launcher's order. When it runs it
  *   decides which actions there are; a manifest one keeps the intent read here (the bridge's listing shortens links).
- * Without the bridge: the manifest's alone.
+ * Without the bridge (always so in a release build, see [LocalBridge.ENABLED]): the manifest's alone.
  */
 object AppActions {
     private const val TAG = "BentoBarApps"

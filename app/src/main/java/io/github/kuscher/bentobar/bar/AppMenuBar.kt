@@ -64,9 +64,9 @@ data class FrontApp(val windowId: Int, val pkg: String, val label: String)
 /** The words of the app menu bar, as popup keys ("app:name"…). */
 enum class AppMenu(val key: String) {
     NAME("app:name"), WINDOW("app:window"), TAB("app:tab"), ACTIONS("app:actions"), SETTINGS("app:settings");
-    /** Whether [app]'s bar has this word: Tab is Chrome's alone (prototype), Actions an app's that publishes some. */
+    /** Whether [app]'s bar has this word: Tab is Chrome's alone (prototype, debug builds only), Actions an app's that publishes some. */
     fun shownFor(app: FrontApp, hasActions: Boolean) = when (this) {
-        TAB -> app.pkg == CHROME
+        TAB -> LocalBridge.ENABLED && app.pkg == CHROME
         ACTIONS -> hasActions
         else -> true
     }
@@ -79,7 +79,9 @@ enum class AppMenu(val key: String) {
 /**
  * The app in front, and what can be done to its window. This reads more than the rest of BentoBar does: which
  * application window is active, that window's package (its root node's package name, nothing of what it shows),
- * and the caption SystemUI draws above it, whose buttons it presses for the Window menu.
+ * and the caption SystemUI draws above it, whose buttons it presses for the Window menu. Two more, each only when
+ * asked: the window's title, for the Tab menu (debug builds, [title]), and the taskbar's icon for the app with the
+ * menu it opens, to start a quick action only the launcher may start ([runViaTaskbar]).
  */
 class AppWindows(private val service: AccessibilityService) {
     private val tag = "BentoBarApps"
@@ -96,20 +98,25 @@ class AppWindows(private val service: AccessibilityService) {
         return SeenWindow(w.id, w.type, w.isActive, w.isFocused, r.left, r.top, r.right, r.bottom)
     }
 
+    /** The last read found a window that couldn't be read yet: the caller looks again soon. */
+    var unreadable = false
+        private set
+
     /** The app in front now; null for none (the home screen). Cheap: the window list, and a package read once per window. */
     fun read(): FrontApp? {
         val list = runCatching { service.windows }.getOrDefault(emptyList())
         val seen = list.map(::seen)
-        val id = FrontAppRules.next(seen, following) ?: return null
-        following = id
-        val w = list.firstOrNull { it.id == id } ?: return last // the list ended early: keep what we had
         if (packages.size > 64) packages.clear()
-        val pkg = packages[id] ?: runCatching { w.root?.packageName?.toString() }.getOrNull()?.also { packages[id] = it } ?: return last
-        val hasCaption = FrontAppRules.caption(seen, seen(w)) != null
-        // The home screen has no caption: no menus for it. A full-screen app has none either, but it is an app.
-        if (!hasCaption && pkg == home) { last = null; return null }
-        if (pkg == service.packageName) return last // our own settings window: the menus stay with the app before it
-        return FrontApp(id, pkg, label(pkg)).also { last = it }
+        fun pkgOf(id: Int) = packages[id] ?: runCatching { list.firstOrNull { it.id == id }?.root?.packageName?.toString() }.getOrNull()?.also { packages[id] = it }
+        val pick = FrontAppRules.pick(seen, following, last?.windowId, ::pkgOf, home, service.packageName)
+        unreadable = pick == FrontAppRules.Pick.Unreadable
+        FrontAppRules.next(seen, following)?.let { following = it }
+        last = when (pick) {
+            is FrontAppRules.Pick.Show -> if (last?.windowId == pick.id && last?.pkg == pick.pkg) last else FrontApp(pick.id, pick.pkg, label(pick.pkg))
+            FrontAppRules.Pick.Keep -> last
+            FrontAppRules.Pick.Hide, FrontAppRules.Pick.Unreadable -> null
+        }
+        return last
     }
 
     private fun label(pkg: String): String = runCatching {
@@ -194,21 +201,26 @@ class AppWindows(private val service: AccessibilityService) {
         // The icon's description is the app's name, then its window's when they differ ("Settings Internet Active").
         val icon = findAll(taskbar) { n -> n.contentDescription?.toString()?.let { it == app.label || it.startsWith("${app.label} ") } == true &&
             n.actionList.any { it.label?.toString() == "Shortcut Menu" } }.firstOrNull() ?: return failedQuietly("no taskbar icon for ${app.label}")
+        val launcher = taskbar.packageName?.toString()
+        fun launcherWindows() = runCatching { service.windows }.getOrDefault(emptyList()).filter { it.root?.packageName?.toString() == launcher }
+        val before = launcherWindows().map { it.id }.toSet()
+        var menuOpened = false
         icon.performAction(icon.actionList.first { it.label?.toString() == "Shortcut Menu" }.id)
         repeat(15) {
             Thread.sleep(100)
             service.clearCache()
-            for (w in runCatching { service.windows }.getOrDefault(emptyList())) {
+            for (w in launcherWindows()) {
                 val root = w.root ?: continue
-                if (root.packageName?.toString() != taskbar.packageName?.toString()) continue
+                if (w.id !in before) menuOpened = true
                 val entry = findAll(root) { it.text?.toString() == label || it.contentDescription?.toString() == label }.firstOrNull() ?: continue
                 var target: AccessibilityNodeInfo? = entry
                 while (target != null && !target.isClickable) target = target.parent
                 if (target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) { Log.i(tag, "quick action '$label' through the taskbar"); return true }
             }
         }
-        // The menu came up without that entry (or not at all): close what may be open.
-        service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+        // The menu came up without that entry: close it. Only a window of its own that came up is closed this way, so
+        // Back never goes to the app in front when no menu opened.
+        if (menuOpened) service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
         return failedQuietly("'$label' not in ${app.label}'s taskbar menu")
     }
 
@@ -293,7 +305,7 @@ private object CaptionActions {
 
 /**
  * The app menu bar's words, right of the clock: the app's name (semibold, as a menu bar's first word is) and then
- * Window and Settings. Each opens its popup; with one open, pointing at another opens that one ([onHover]), as in a
+ * Window, Tab (Chrome, debug builds), Actions (an app that publishes some) and Settings. Each opens its popup; with one open, pointing at another opens that one ([onHover]), as in a
  * menu bar, whatever "Switch popups on hover" says for the items.
  */
 @Composable

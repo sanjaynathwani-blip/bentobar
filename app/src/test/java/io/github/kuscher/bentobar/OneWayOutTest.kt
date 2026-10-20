@@ -53,6 +53,20 @@ class OneWayOutTest {
         assertTrue(text.contains("HOST = \"127.0.0.1\""))
         assertTrue("it connects only to HOST", Regex("""InetSocketAddress\(([^,]+),""").findAll(text).all { it.groupValues[1].trim() == "HOST" })
         assertTrue("it reads no key and asks no service", "Online." !in text && "Http.get(" !in text)
+        // One road out in the file, and only that one: a single Socket, connected once, and none of the other ways.
+        assertEquals("one Socket", 1, Regex("""Socket\(\)""").findAll(text).count())
+        assertEquals("one connect", 1, Regex("""\.connect\(""").findAll(text).count())
+        for (way in listOf("URLConnection", "openConnection", "openStream", "URL(", "DatagramSocket", "WebView", "HttpClient")) assertTrue("LocalBridge mentions $way", way !in text)
+    }
+
+    @Test fun theLocalBridgeIsForDebugBuildsOnly() {
+        // A release build never connects: on a device with no bridge any app could take the ports, see which app is in
+        // front from each request and answer with intents of its choosing.
+        val text = code(File(main, "io/github/kuscher/bentobar/net/LocalBridge.kt"))
+        assertTrue("ENABLED is BuildConfig.DEBUG", text.contains("val ENABLED = BuildConfig.DEBUG"))
+        assertTrue("the one request answers null at once when not ENABLED", text.contains("String? = if (!ENABLED) null else runCatching {"))
+        val menuBar = code(File(main, "io/github/kuscher/bentobar/bar/AppMenuBar.kt"))
+        assertTrue("the Tab word needs the bridge", menuBar.contains("TAB -> LocalBridge.ENABLED && app.pkg == CHROME"))
     }
 
     @Test fun onlyWeatherFlightAndStocksAskAService() {

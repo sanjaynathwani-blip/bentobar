@@ -52,4 +52,37 @@ object FrontAppRules {
      * not necessarily gone (the list can end early), so the old one is kept rather than dropped.
      */
     fun next(windows: List<SeenWindow>, before: Int?): Int? = front(windows)?.id ?: before
+
+    /** What the app menu bar does after a look at the window list. */
+    sealed interface Pick {
+        /** Menus for the app of window [id], package [pkg]. */
+        data class Show(val id: Int, val pkg: String) : Pick
+        /** No menus: no app in front, the home screen, or the window the bar had has gone. */
+        data object Hide : Pick
+        /** The menus stay with the app they were for (our own window or popup in front, or the list ended early). */
+        data object Keep : Pick
+        /** No menus until the window in front can be read: it was just added and its tree isn't there yet. Look again soon. */
+        data object Unreadable : Pick
+    }
+
+    /**
+     * Which app the menus are for. [following] is the window the bar followed before, [shownId] the window whose
+     * menus are shown now, [pkgOf] the package of a window (its root node's), null when it can't be read yet,
+     * [home] the home screen's package and [self] BentoBar's own.
+     * - The window followed but missing from a list that holds other app windows has gone: hide. With no app window
+     *   listed at all, the list ended early (a dialog on top): keep.
+     * - A window that can't be read yet never gets the old app's menus (a Close there would close the window
+     *   behind): [Pick.Unreadable].
+     * - The home screen (no caption) gets none; a full-screen app (no caption either) is still an app.
+     * - BentoBar's own settings window keeps the app before it, if that app's window is still listed.
+     */
+    fun pick(windows: List<SeenWindow>, following: Int?, shownId: Int?, pkgOf: (Int) -> String?, home: String?, self: String): Pick {
+        val id = next(windows, following) ?: return Pick.Hide
+        val w = windows.firstOrNull { it.id == id }
+            ?: return if (windows.any { it.type == APPLICATION }) Pick.Hide else Pick.Keep
+        val pkg = pkgOf(id) ?: return Pick.Unreadable
+        if (pkg == self) return if (shownId != null && windows.any { it.id == shownId }) Pick.Keep else Pick.Hide
+        if (pkg == home && caption(windows, w) == null) return Pick.Hide
+        return Pick.Show(id, pkg)
+    }
 }

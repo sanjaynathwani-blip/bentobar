@@ -12,6 +12,12 @@ terminal app shows ports that listen in Linux on Android's 127.0.0.1, so BentoBa
   screen may read.
 
     python3 tools/menubar-bridge.py            (ADB_SERIAL=host:port picks the device; Ctrl+C stops it)
+
+WARNING: while this runs, EVERY app on the Googlebook can reach both ports, not only BentoBar. The terminal shows a
+port on Android's loopback only when it listens on all addresses here, so they can't be bound more narrowly. On
+:39222 any app gets Chrome's full DevTools: every tab's address, and running JavaScript in any tab, which can read
+its cookies. On :39223 any app can list any app's quick actions. Run it only to try the prototype, and stop it
+(Ctrl+C) when done. Only debug builds of BentoBar connect to it; a release build never does.
 """
 import json
 import os
@@ -68,7 +74,8 @@ def relay_chrome():
 
 def parse_intent(text):
     """The last intent of a shortcut, from Intent.toString() plus its persisted extras ("/null" or PersistableBundle)."""
-    m = re.search(r"Intent \{ (.*?) \}/(null|PersistableBundle\[\{(.*?)\}\])\]?$", text)
+    # A shortcut's back stack lists several intents: start at the last "Intent {" so its fields aren't the first one's.
+    m = re.search(r"Intent \{ (.*?) \}/(null|PersistableBundle\[\{(.*?)\}\])\]?$", text[text.rfind("Intent {"):])
     if not m:
         return None
     body, extras = m.group(1), m.group(3)
