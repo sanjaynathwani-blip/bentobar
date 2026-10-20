@@ -54,7 +54,8 @@ class OneWayOutTest {
         assertTrue("it connects only to HOST", Regex("""InetSocketAddress\(([^,]+),""").findAll(text).all { it.groupValues[1].trim() == "HOST" })
         assertTrue("it reads no key and asks no service", "Online." !in text && "Http.get(" !in text)
         // One road out in the file, and only that one: a single Socket, connected once, and none of the other ways.
-        assertEquals("one Socket", 1, Regex("""Socket\(\)""").findAll(text).count())
+        assertEquals("one Socket, made without an address", 1, Regex("""Socket\(""").findAll(text).count())
+        assertEquals("that Socket is Socket()", 1, Regex("""Socket\(\)""").findAll(text).count())
         assertEquals("one connect", 1, Regex("""\.connect\(""").findAll(text).count())
         for (way in listOf("URLConnection", "openConnection", "openStream", "URL(", "DatagramSocket", "WebView", "HttpClient")) assertTrue("LocalBridge mentions $way", way !in text)
     }

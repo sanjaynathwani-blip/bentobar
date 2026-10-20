@@ -88,6 +88,8 @@ class AppWindows(private val service: AccessibilityService) {
     private val packages = HashMap<Int, String>()
     private var following: Int? = null
     private var last: FrontApp? = null
+    /** The app whose menus were shown when a window that can't be read yet came forward. */
+    private var interrupted: FrontApp? = null
     private val home: String? by lazy {
         service.packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_DEFAULT_ONLY)
             ?.activityInfo?.packageName
@@ -108,14 +110,18 @@ class AppWindows(private val service: AccessibilityService) {
         val seen = list.map(::seen)
         if (packages.size > 64) packages.clear()
         fun pkgOf(id: Int) = packages[id] ?: runCatching { list.firstOrNull { it.id == id }?.root?.packageName?.toString() }.getOrNull()?.also { packages[id] = it }
-        val pick = FrontAppRules.pick(seen, following, last?.windowId, ::pkgOf, home, service.packageName)
+        // While a window can't be read yet the menus are off, but the app they were for is remembered: if that window
+        // turns out to be our own settings, the menus come back for it.
+        val shown = last ?: interrupted
+        val pick = FrontAppRules.pick(seen, following, shown?.windowId, ::pkgOf, home, service.packageName)
         unreadable = pick == FrontAppRules.Pick.Unreadable
         FrontAppRules.next(seen, following)?.let { following = it }
         last = when (pick) {
-            is FrontAppRules.Pick.Show -> if (last?.windowId == pick.id && last?.pkg == pick.pkg) last else FrontApp(pick.id, pick.pkg, label(pick.pkg))
-            FrontAppRules.Pick.Keep -> last
+            is FrontAppRules.Pick.Show -> if (shown?.windowId == pick.id && shown.pkg == pick.pkg) shown else FrontApp(pick.id, pick.pkg, label(pick.pkg))
+            FrontAppRules.Pick.Keep -> shown
             FrontAppRules.Pick.Hide, FrontAppRules.Pick.Unreadable -> null
         }
+        interrupted = if (unreadable) shown else null
         return last
     }
 

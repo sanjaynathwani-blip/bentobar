@@ -38,7 +38,11 @@ FLAG_DYNAMIC, FLAG_MANIFEST, FLAG_DISABLED = 0x1, 0x20, 0x40
 
 
 def shell(*args):
-    return subprocess.run(ADB + ["shell", *args], capture_output=True, text=True, timeout=10).stdout
+    """The command's output; raises when adb fails (not connected), so a failure never reads as an empty answer."""
+    done = subprocess.run(ADB + ["shell", *args], capture_output=True, text=True, timeout=10)
+    if done.returncode != 0:
+        raise RuntimeError(f"adb shell failed ({done.returncode}): {done.stderr.strip()[:200]}")
+    return done.stdout
 
 
 def pipe(a, b):
@@ -123,7 +127,13 @@ class Shortcuts(BaseHTTPRequestHandler):
         if url.path != "/shortcuts" or not re.fullmatch(r"[A-Za-z0-9_.]+", pkg):
             self.send_error(404)
             return
-        body = json.dumps(shortcuts(pkg, self.user)).encode()
+        try:
+            body = json.dumps(shortcuts(pkg, self.user)).encode()
+        except (RuntimeError, subprocess.TimeoutExpired) as e:
+            # adb dropped: an error, not an empty list, so the app keeps the shortcuts it read itself.
+            print(f"shortcuts {pkg}: {e}", flush=True)
+            self.send_error(502)
+            return
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

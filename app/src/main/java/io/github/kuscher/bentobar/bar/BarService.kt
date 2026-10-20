@@ -453,6 +453,7 @@ class BarController(private val service: AccessibilityService) {
             // seconds), and a reading owed while hidden is taken here.
             readSoon(ColorWatch.Cause.SLOW, 250)
             Ticker.start("bar")
+            main.post(readFront) // which app is in front isn't read while the bar is hidden
             Log.i(tag, "bar shown: bar=${s.bar.toShortString()} free=${s.free.toShortString()} [${s.summary}]")
         } else strip.relayout()
     }
@@ -461,12 +462,15 @@ class BarController(private val service: AccessibilityService) {
 
     /**
      * Reads which app is in front; a change redraws the app menu bar and closes its popup (it was for the other app).
-     * Presenting shows no menus: only a running timer or a meeting about to start.
+     * Presenting shows no menus: only a running timer or a meeting about to start. Called again when the screen
+     * turns on or unlocks ([check]), so menus come back with the bar.
      */
     private fun updateFront() {
         if (!started) return
         val cfg = Store.config.value
-        val app = if (cfg.appMenuBar && !cfg.presenting) apps.read() else null
+        // Nothing is read while the menus can't show: switched off, presenting, BentoBar hidden, the screen off or locked.
+        val app = if (cfg.appMenuBar && !cfg.presenting && cfg.enabled && pm.isInteractive && !km.isKeyguardLocked) apps.read() else null
+        if (!cfg.appMenuBar && actions.value.isNotEmpty()) actions.value = emptyMap()
         if (app == null && apps.unreadable && frontRetries < 5) { frontRetries++; main.removeCallbacks(readFront); main.postDelayed(readFront, 250) }
         else if (!apps.unreadable) frontRetries = 0
         if (app == frontApp.value) return
@@ -506,7 +510,7 @@ class BarController(private val service: AccessibilityService) {
         val app = frontApp.value
         val cfg = Store.config.value
         val room = minOf(screenW / 2 - (24 * density).toInt() - s.free.left, s.free.width())
-        if (app == null || !cfg.appMenuBar || cfg.presenting || room < MIN_MENU_ROOM_DP * density) { appStrip.hide(); appPlaced.clear(); return null }
+        if (app == null || !cfg.appMenuBar || cfg.presenting || room < MIN_MENU_ROOM_DP * density) { appStrip.hide(); appPlaced.clear(); drawnChanged(); return null }
         val p = appStrip.params
         p.gravity = Gravity.TOP or Gravity.LEFT
         p.height = s.bar.height()
@@ -516,6 +520,7 @@ class BarController(private val service: AccessibilityService) {
         p.width = if (measured) appStripWidth.coerceAtMost(room) else 1
         if (!appStrip.shown) appStrip.show { AppStripHost() } else appStrip.relayout()
         appStrip.setContentVisible(measured)
+        drawnChanged()
         return if (appStrip.shown && measured) p.x + p.width else null
     }
 
@@ -589,8 +594,8 @@ class BarController(private val service: AccessibilityService) {
      */
     private fun readSoon(cause: ColorWatch.Cause, firstMs: Long) {
         if (!started || !strip.shown) return
-        // Not while the strip has nothing to draw: the reading waits until it has ([ColorWatch.pause]).
-        if (stripEmpty) return watch.owe(cause)
+        // Not while nothing is drawn (no items, no app menus): the reading waits until something is ([ColorWatch.pause]).
+        if (nothingDrawn) return watch.owe(cause)
         watch.cause(cause, SystemClock.uptimeMillis(), firstMs)
         arm()
     }
@@ -605,7 +610,7 @@ class BarController(private val service: AccessibilityService) {
 
     private fun sampleColor() {
         if (!started || !strip.shown || !pm.isInteractive) return watch.clear()
-        if (stripEmpty) return watch.pause()
+        if (nothingDrawn) return watch.pause()
         val s = snap
         if (s == null || Store.config.value.color != ColorMode.AUTO) { watch.clear(); return applyLook() }
         watch.taken(SystemClock.uptimeMillis())
@@ -738,15 +743,26 @@ class BarController(private val service: AccessibilityService) {
      */
     private var stripEmpty = false
 
+    /** Neither items nor the app menu bar's words on screen: the colour readings pause (both draw in the bar's colours). */
+    private val nothingDrawn get() = stripEmpty && !(appStrip.shown && appStripWidth > 0)
+    private var wasDrawn = true
+
+    /** Nothing drawn: no readings; something again: the readings owed meanwhile, or two quick ones. */
+    private fun drawnChanged() {
+        val drawn = !nothingDrawn
+        if (drawn == wasDrawn) return
+        wasDrawn = drawn
+        if (started && strip.shown) {
+            if (drawn) watch.resume(SystemClock.uptimeMillis(), 250) else watch.pause()
+            arm()
+        }
+    }
+
     private fun applyWidth(w: Int) {
         val empty = w <= 0
         if (empty != stripEmpty) {
             stripEmpty = empty; strip.setContentVisible(!empty); trace("strip ${if (empty) "empty" else "has content"}"); updateAwake()
-            // Nothing to draw: no readings; something again: the readings owed meanwhile, or two quick ones.
-            if (started && strip.shown) {
-                if (empty) watch.pause() else watch.resume(SystemClock.uptimeMillis(), 250)
-                arm()
-            }
+            drawnChanged()
         }
         val width = w.coerceAtLeast(1)
         if (strip.params.width == width) return
