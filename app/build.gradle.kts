@@ -9,15 +9,17 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "io.github.kuscher.bentobar"
+        // Menu bar fork: an app of its own, so it installs beside BentoBar and is never taken for it. Based on BentoBar 1.6.
+        applicationId = "io.github.sanjaynathwani_blip.menubar"
         minSdk = 34
         targetSdk = 37
-        versionCode = 19
-        versionName = "1.6"
+        versionCode = 1
+        versionName = "0.1.0"
     }
 
-    // Release signing from ~/.config/bentobar (never committed). Absent -> unsigned release build.
-    val keyDir = File(System.getProperty("user.home"), ".config/bentobar")
+    // Release signing from ~/.config/bentobar-fork (never committed): the fork's own key, not BentoBar's. Absent ->
+    // unsigned release build.
+    val keyDir = File(System.getProperty("user.home"), ".config/bentobar-fork")
     val keyFile = File(keyDir, "keystore.jks")
     val keyPassFile = File(keyDir, "keystore.pass")
     signingConfigs {
@@ -26,7 +28,7 @@ android {
                 storeFile = keyFile
                 val pw = keyPassFile.readText().trim()
                 storePassword = pw
-                keyAlias = "bentobar" // the release key made on 2026-09-30 (the DiscoBar-era key was retired)
+                keyAlias = "bentobar-fork" // the fork's release key, made on 2026-10-20
                 keyPassword = pw
             }
         }
@@ -42,8 +44,8 @@ android {
         // `-PreleaseSignedDebug`: a debug build signed with the release key, so it installs over a released BentoBar on
         // a test device and keeps its layout and its accessibility switch (same id, same key, same version code).
         if (project.hasProperty("releaseSignedDebug")) debug { signingConfig = signingConfigs.getByName("release") }
-        // Menu bar fork: debug builds install beside a released BentoBar, as their own app.
-        debug { applicationIdSuffix = ".menubar" }
+        // Menu bar fork: debug builds install beside the fork's release, as their own app.
+        debug { applicationIdSuffix = ".dev" }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
