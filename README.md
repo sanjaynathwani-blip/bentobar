@@ -33,6 +33,9 @@ any employer, or by BentoBar's author (<a href="#about-this-fork">more</a>).</su
   <img src="docs/images/menubar-hero.png" width="880" alt="The Googlebook status bar with the app menu bar right of the clock: the app's name, Window, Actions and Settings, with Clock's Actions menu open">
 </p>
 
+<p align="center"><b><a href="../../releases/download/menubar-0.1.0/BentoBarFork-demo.mp4">▶ Watch the one-minute demo</a></b>
+(MP4, 19 MB): switching apps, Chrome's tabs, the Window menu and Clock's quick actions.</p>
+
 ## What it adds
 
 [BentoBar](https://github.com/kuscher/bentobar) puts your own items into the empty part of the
