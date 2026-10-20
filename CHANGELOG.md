@@ -1,5 +1,12 @@
 # Changelog
 
+## Fork 0.1.0 (2026-10-20)
+
+The first release of the unofficial fork, **BentoBar fork**, based on BentoBar 1.6. It installs beside BentoBar as an app of its own.
+
+- **App menu bar.** Right of the clock, the menus of the app in front: its name (App info, Screenshot, Open new window), **Window** (minimize, maximize or restore, resize left or right, full screen, split screen, window options, close, each with the Googlebook's keyboard shortcut), **Actions** (the quick actions the app offers on its taskbar icon) and **Settings** (its notification, language, permission and open-by-default pages). It follows the app you switch to, shows nothing over the home screen or while presenting, and is switched off in **Look › App menu bar**.
+- **Privacy.** The disclosure, the accessibility description and About say what the menu bar reads: which app is in front, the system's title bar over its window, and the taskbar icon's menu when a quick action is started through it. Never what an app shows inside its window.
+
 ## 1.6 (2026-10-15)
 
 - **Clipboard and scratchpad.** Keep up to eight pinned snippets and your recent session clips one click away. Clicking a snippet copies it and, when enabled, pastes it straight into the active input field. Recent clips stay in memory only and sensitive clips (such as password manager copies) are skipped.
