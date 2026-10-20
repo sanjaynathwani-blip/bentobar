@@ -30,6 +30,11 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- The home screen app (it has no launcher icon): the app menu bar shows nothing while it is in front. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
         <!-- The Googlebook's Feedback app, for the Shortcut item's Report a bug: offered only where it is. -->
         <package android:name="com.google.android.desktop.feedback" />
     </queries>
