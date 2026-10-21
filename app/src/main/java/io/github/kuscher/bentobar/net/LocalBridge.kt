@@ -16,7 +16,7 @@ import java.net.Socket
  * What the app menu bar needs from the shell (fork, PROTOTYPE ONLY), through tools/menubar-bridge.py: a bridge on a
  * developer's machine, run in the Googlebook's Linux terminal with adb connected to the Googlebook, whose ports
  * Android sees on its own loopback.
- * - Chrome's open tabs, for the Tab menu: Chrome lists them and switches between them on its remote-debugging
+ * - Chrome's open tabs, for the Tabs menu: Chrome lists them and switches between them on its remote-debugging
  *   socket, which only the shell may open; the bridge brings it to [CHROME_PORT].
  * - An app's dynamic quick actions, for the Actions menu: only the shell and the home screen may read them; the
  *   bridge answers on [SHORTCUTS_PORT].

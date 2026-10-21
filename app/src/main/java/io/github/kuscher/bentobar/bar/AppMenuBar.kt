@@ -84,7 +84,7 @@ enum class AppMenu(val key: String) {
  * The app in front, and what can be done to its window. This reads more than the rest of BentoBar does: which
  * application window is active, that window's package (its root node's package name, nothing of what it shows),
  * and the caption SystemUI draws above it, whose buttons it presses for the Window menu. Two more, each only when
- * asked: the window's title, for the Tab menu (debug builds, [title]), and the taskbar's icon for the app with the
+ * asked: the window's title, for the Tabs menu (debug builds, [title]), and the taskbar's icon for the app with the
  * menu it opens, to start a quick action only the launcher may start ([runViaTaskbar]).
  */
 class AppWindows(private val service: AccessibilityService) {
@@ -440,7 +440,7 @@ fun AppSettingsMenu(app: FrontApp, windows: AppWindows, host: MenuHost) {
     }
 }
 
-/** What the Tab menu read: Chrome's tabs, or null when the relay to Chrome's debugging socket isn't there. */
+/** What the Tabs menu read: Chrome's tabs, or null when the relay to Chrome's debugging socket isn't there. */
 private class ReadTabs(val tabs: List<LocalBridge.Tab>?)
 
 /**

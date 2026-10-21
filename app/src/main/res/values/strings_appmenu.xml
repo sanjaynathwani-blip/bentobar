@@ -21,7 +21,7 @@
     <string name="appmenu_permissions">Permissions</string>
     <string name="appmenu_open_by_default">Open by default</string>
     <string name="appmenu_action_failed">That didn\'t work for this window</string>
-    <string name="appmenu_tab">Tab</string>
+    <string name="appmenu_tab">Tabs</string>
     <string name="appmenu_tab_next">Next tab</string>
     <string name="appmenu_tab_previous">Previous tab</string>
     <string name="appmenu_tab_loading">Reading Chrome\'s tabs…</string>

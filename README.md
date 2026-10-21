@@ -119,7 +119,7 @@ section](https://github.com/kuscher/bentobar#privacy) has the details.
 Debug builds have two more things that need a helper script running in the Googlebook's Linux
 terminal with adb connected to the Googlebook itself (`tools/menubar-bridge.py`):
 
-- a **Tab** menu for Chrome: every open tab, with Next and Previous, through Chrome's
+- a **Tabs** menu for Chrome: every open tab, with Next and Previous, through Chrome's
   remote-debugging socket;
 - quick actions that apps publish **while running** (recent chats, for example), from
   `cmd shortcut`.

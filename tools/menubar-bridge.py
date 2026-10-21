@@ -5,7 +5,7 @@
 Run this in the Googlebook's Linux terminal with adb connected to the Googlebook itself (wireless debugging). The
 terminal app shows ports that listen in Linux on Android's 127.0.0.1, so BentoBar reaches both of these there:
 
-- :39222, Chrome's remote-debugging socket (the Tab menu: its tabs, and switching between them). Only the shell may
+- :39222, Chrome's remote-debugging socket (the Tabs menu: its tabs, and switching between them). Only the shell may
   open it: this forwards it with adb (to port 9222 here) and relays to it.
 - :39223, an app's published quick actions (the Actions menu): GET /shortcuts?pkg=PACKAGE answers with its
   manifest and dynamic shortcuts as JSON, from `cmd shortcut get-shortcuts`, which only the shell and the home
