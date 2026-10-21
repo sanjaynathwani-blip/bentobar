@@ -6,8 +6,9 @@
 
 <p align="center">
   <b>A menu bar for the app in front, right in your Googlebook's status bar.</b><br>
-  Click the app's name, Window, Actions or Settings beside the clock, as on a desktop: snap, maximize or close a
-  window, start an app's quick actions, or jump to its notification and permission settings.
+  Click the app's name, Window, Actions, Widgets or Settings beside the clock, as on a desktop: snap, maximize or
+  close a window, start an app's quick actions, add its widgets to the home screen, or jump to its notification and
+  permission settings.
 </p>
 
 <p align="center">
@@ -47,6 +48,7 @@ the app you're using, in the status bar's own font and colour. Switch apps and t
 | **The app's name** (bold) | App info, Screenshot, Open new window |
 | **Window** | Minimize, Maximize or Restore, Resize left or right, Full screen, Split screen, Window options and Close, each with the Googlebook's keyboard shortcut beside it |
 | **Actions** | the quick actions the app offers on its taskbar icon (New tab, New message, …), for apps that have some |
+| **Widgets** | the app's home screen widgets, each with a preview, its size and a **+** that adds it to the home screen, for apps that have some |
 | **Settings** | the app's Notifications, Language, Permissions and Open by default pages, one click each |
 
 <p align="center">
@@ -56,6 +58,11 @@ the app you're using, in the status bar's own font and colour. Switch apps and t
 - **It follows the app in front.** Over the home screen and while BentoBar is presenting it shows
   nothing; a full-screen app keeps its menus.
 - **Menu bar manners:** with one menu open, pointing at another word opens that one.
+- **Adding a widget** goes through the home screen's own widget picker, since Android lets only the
+  home screen add another app's widget. You see the picker open, turn to the app's page and add the
+  widget, at a pace you can follow, and it closes onto the home screen with the widget on it. Opening
+  the picker minimises your windows, as the home screen does: click them in the taskbar to bring
+  them back.
 - **On by default,** and one switch turns it off: **Look › App menu bar**.
 - Everything else is BentoBar 1.6 as its author made it: the items, the hidden items behind ‹, Look,
   the Quick Settings tiles. Its [README](https://github.com/kuscher/bentobar#readme) describes all of it.
@@ -95,7 +102,9 @@ accessibility description and About page say so. With **Look › App menu bar** 
   buttons the Window menu presses for you;
 - **the taskbar's icons and the menu one opens,** only when you start a quick action that only the
   launcher may start: it reads the icons' names (which can include a window's title) to find the
-  app's icon, opens its menu and clicks the entry for you.
+  app's icon, opens its menu and clicks the entry for you;
+- **the home screen's widget list,** only when you add a widget from the Widgets menu: it reads the
+  list's app and widget names to open that app's page, and presses the widget's Add for you.
 
 It never reads what an app shows inside its window, and doesn't watch your keyboard, mouse or
 touches. Nothing it reads is saved or sent anywhere: the release build has no way to send it
@@ -129,6 +138,9 @@ terminal with adb connected to the Googlebook itself (`tools/menubar-bridge.py`)
   when the bar changes.
 - Keyboard shortcuts in the Window menu are the Googlebook's defaults; if you changed them in
   the system's Keyboard shortcuts, the menu still shows the defaults.
+- **Widgets › +** opens the widget picker the way the Googlebook's (Pixel) launcher opens it itself,
+  which no document promises: a launcher update could stop it. If the picker doesn't open, a toast
+  says how to add the widget by hand (right-click the home screen › Browse widgets).
 - Tested on one Googlebook (ASUS Googlebook 14). Others may differ.
 
 ## Build
@@ -143,7 +155,8 @@ Needs JDK 21 and the Android SDK (platform 37).
 
 The menu bar lives in `bar/AppMenuBar.kt` (menus and reading the front window), `bar/FrontAppRules.kt`
 (which app the menus are for: pure, unit-tested from real Googlebook window lists) and
-`bar/AppActions.kt` (quick actions). [CLAUDE.md](CLAUDE.md) is BentoBar's own guide to the code.
+`bar/AppActions.kt` (quick actions), `bar/AppWidgets.kt` (the Widgets menu) and `bar/WidgetAddRules.kt`
+with `bar/WidgetAdder.kt` (adding a widget through the picker: pure, unit-tested steps). [CLAUDE.md](CLAUDE.md) is BentoBar's own guide to the code.
 
 ## About this fork
 

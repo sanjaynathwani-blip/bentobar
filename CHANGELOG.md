@@ -1,5 +1,10 @@
 # Changelog
 
+## Fork, unreleased
+
+- **Widgets menu.** For an app that publishes home screen widgets, the menu bar has a **Widgets** menu: each widget with a preview, its size in home screen cells and a **+**. The + adds that widget to the home screen through the home screen's own widget picker. You see the picker turn to the app's page and add it, at a pace you can follow. Your windows are minimised while it opens, and a toast says how to bring them back.
+- **Privacy.** The disclosure, the accessibility description and the README now say that adding a widget reads the widget picker's list (its app and widget names) to press the widget's Add.
+
 ## Fork 0.1.1 (2026-10-21)
 
 - **Window menu in two-pane windows.** In a window that shows two panes, such as Settings, the Window menu's actions (minimize, maximize, resize, close and the rest) now work whichever pane is in front. With the left pane in front they did nothing.

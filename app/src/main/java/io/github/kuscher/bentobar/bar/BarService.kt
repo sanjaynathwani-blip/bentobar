@@ -152,6 +152,9 @@ class BarController(private val service: AccessibilityService) {
     private val actions = mutableStateOf<Map<String, List<AppAction>>>(emptyMap())
     /** Their own thread: the bridge's shell command takes seconds, which the colour readings on [io] mustn't wait for. */
     private val actionsIo = Executors.newSingleThreadExecutor()
+    /** Each app's home screen widgets as last read (packages to what they publish), for the Widgets word and its menu. */
+    private val widgets = mutableStateOf<Map<String, List<AppWidget>>>(emptyMap())
+    private val widgetAdder = WidgetAdder(service, main)
 
     /** A click outside the strip while hidden items are out folds them away, unless a menu is open (it closes itself). */
     private fun outsideClick() {
@@ -284,6 +287,7 @@ class BarController(private val service: AccessibilityService) {
         scope.cancel()
         io.shutdown()
         actionsIo.shutdown()
+        widgetAdder.stop()
     }
 
     /** Window events, logged only where asked for: `adb shell setprop log.tag.BentoBarEvents DEBUG`. */
@@ -471,12 +475,13 @@ class BarController(private val service: AccessibilityService) {
         // Nothing is read while the menus can't show: switched off, presenting, BentoBar hidden, the screen off or locked.
         val app = if (cfg.appMenuBar && !cfg.presenting && cfg.enabled && pm.isInteractive && !km.isKeyguardLocked) apps.read() else null
         if (!cfg.appMenuBar && actions.value.isNotEmpty()) actions.value = emptyMap()
+        if (!cfg.appMenuBar && widgets.value.isNotEmpty()) widgets.value = emptyMap()
         if (app == null && apps.unreadable && frontRetries < 5) { frontRetries++; main.removeCallbacks(readFront); main.postDelayed(readFront, 250) }
         else if (!apps.unreadable) frontRetries = 0
         if (app == frontApp.value) return
         val was = frontApp.value
         frontApp.value = app
-        if (app != null) loadActions(app.pkg)
+        if (app != null) { loadActions(app.pkg); loadWidgets(app.pkg) }
         appPlaced.clear() // the words are placed again for this app (Chrome's bar has one more)
         if (AppMenu.of(menuKey) != null && app?.windowId != was?.windowId) closeMenu()
         check(full = false)
@@ -496,6 +501,18 @@ class BarController(private val service: AccessibilityService) {
                 // AppAction holds an Intent and a bitmap, which compare as objects: compare what they say instead.
                 fun List<AppAction>.said() = map { Triple(it.label, it.dynamic, it.intent.toUri(0)) }
                 main.post { if (started && actions.value[pkg]?.said() != found.said()) actions.value = actions.value + (pkg to found) }
+            }
+        }
+    }
+
+    /** Reads [pkg]'s home screen widgets in the background; the bar gets a Widgets word once there are some. */
+    private fun loadWidgets(pkg: String) {
+        runCatching {
+            actionsIo.execute {
+                val found = AppWidgets.load(service, pkg)
+                // Previews compare as objects: compare which widgets there are instead.
+                fun List<AppWidget>.said() = map { it.provider to it.label }
+                main.post { if (started && widgets.value[pkg]?.said() != found.said()) widgets.value = widgets.value + (pkg to found) }
             }
         }
     }
@@ -527,7 +544,7 @@ class BarController(private val service: AccessibilityService) {
     @Composable
     private fun AppStripHost() {
         val app = frontApp.value ?: return
-        AppMenuStrip(app, hasActions = !actions.value[app.pkg].isNullOrEmpty(), look.value, heightDp.value, open = AppMenu.of(menuKey),
+        AppMenuStrip(app, hasActions = !actions.value[app.pkg].isNullOrEmpty(), hasWidgets = !widgets.value[app.pkg].isNullOrEmpty(), look.value, heightDp.value, open = AppMenu.of(menuKey),
             onWidth = { w -> if (w != appStripWidth) main.post { appStripWidth = w; check(full = false) } },
             onPlaced = { m, r -> appPlaced[m] = r },
             onClick = { m -> hideTip(); openAppMenu(m, toggle = true) },
@@ -550,6 +567,11 @@ class BarController(private val service: AccessibilityService) {
                 val list = actions.value[app.pkg].orEmpty()
                 toggleMenu(m.key, at, 300, from = appStrip) { host -> ActionsMenu(app, list, { a -> runAction(app, a) }, host) }
                 loadActions(app.pkg) // what it publishes changes as it runs: fresh for the next time
+            }
+            AppMenu.WIDGETS -> {
+                val list = widgets.value[app.pkg].orEmpty()
+                toggleMenu(m.key, at, 300, from = appStrip) { host -> WidgetsMenu(app, list, { w -> widgetAdder.add(app, w) }, host) }
+                loadWidgets(app.pkg) // an update can bring new ones: fresh for the next time
             }
             AppMenu.TAB -> {
                 val current = apps.title(app)
@@ -1142,6 +1164,25 @@ class BarController(private val service: AccessibilityService) {
                 }
                 "$n nodes"
             }
+            // `widgets`: the front app's widgets as the Widgets menu has them; `widgetadd LABEL…`: adds the one named LABEL.
+            "widgets" -> {
+                val app = frontApp.value ?: return "no app in front"
+                widgets.value[app.pkg]?.joinToString(" | ") { w ->
+                    "${w.label} ${w.cellsWide}x${w.cellsHigh} ${w.widthDp}x${w.heightDp}dp preview=${when { w.generated != null -> "generated"; w.layout != 0 -> "layout"; w.image != null -> "image"; else -> "none" }}"
+                } ?: "not read yet"
+            }
+            // `widgetadd [PACKAGE] LABEL…`: an app's widget by name, as its + does (the front app's when no package is given).
+            "widgetadd" -> {
+                val pkg = cmd.getOrNull(1)?.takeIf { '.' in it }
+                val label = cmd.drop(if (pkg != null) 2 else 1).joinToString(" ")
+                val app = if (pkg == null) frontApp.value ?: return "no app in front"
+                    else FrontApp(-1, pkg, runCatching { service.packageManager.run { getApplicationLabel(getApplicationInfo(pkg, 0)).toString() } }.getOrDefault(pkg))
+                actionsIo.execute {
+                    val w = AppWidgets.load(service, app.pkg).firstOrNull { it.label == label }
+                    main.post { if (w == null) Log.w(tag, "widgetadd: no widget '$label' in ${app.pkg}") else widgetAdder.add(app, w) }
+                }
+                "adding"
+            }
             "front" -> { updateFront(); "front=${frontApp.value} placed=$appPlaced x=${appStrip.params.x} w=${appStrip.params.width} shown=${appStrip.shown}" }
             // `apppress WINDOW_ID BUTTON [ACTION LABEL…]`: a caption action on any app window, without bringing it forward.
             "apppress" -> {
@@ -1180,7 +1221,7 @@ class BarController(private val service: AccessibilityService) {
                 "running"
             }
             "appopen" -> {
-                val m = AppMenu.entries.firstOrNull { it.name.equals(cmd.getOrNull(1), ignoreCase = true) } ?: return "appopen name|window|tab|actions|settings"
+                val m = AppMenu.entries.firstOrNull { it.name.equals(cmd.getOrNull(1), ignoreCase = true) } ?: return "appopen name|window|tab|actions|widgets|settings"
                 openAppMenu(m); "menu=$menuKey"
             }
             "sample" -> { sampleColor(); "sampling" }

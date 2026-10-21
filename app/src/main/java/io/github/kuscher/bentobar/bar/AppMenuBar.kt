@@ -63,11 +63,15 @@ data class FrontApp(val windowId: Int, val pkg: String, val label: String)
 
 /** The words of the app menu bar, as popup keys ("app:name"…). */
 enum class AppMenu(val key: String) {
-    NAME("app:name"), WINDOW("app:window"), TAB("app:tab"), ACTIONS("app:actions"), SETTINGS("app:settings");
-    /** Whether [app]'s bar has this word: Tab is Chrome's alone (prototype, debug builds only), Actions an app's that publishes some. */
-    fun shownFor(app: FrontApp, hasActions: Boolean) = when (this) {
+    NAME("app:name"), WINDOW("app:window"), TAB("app:tab"), ACTIONS("app:actions"), WIDGETS("app:widgets"), SETTINGS("app:settings");
+    /**
+     * Whether [app]'s bar has this word: Tab is Chrome's alone (prototype, debug builds only), Actions an app's that
+     * publishes some, Widgets an app's that publishes home screen widgets.
+     */
+    fun shownFor(app: FrontApp, hasActions: Boolean, hasWidgets: Boolean) = when (this) {
         TAB -> LocalBridge.ENABLED && app.pkg == CHROME
         ACTIONS -> hasActions
+        WIDGETS -> hasWidgets
         else -> true
     }
     companion object {
@@ -327,7 +331,7 @@ private object CaptionActions {
 
 /**
  * The app menu bar's words, right of the clock: the app's name (semibold, as a menu bar's first word is) and then
- * Window, Tab (Chrome, debug builds), Actions (an app that publishes some) and Settings. Each opens its popup; with one open, pointing at another opens that one ([onHover]), as in a
+ * Window, Tab (Chrome, debug builds), Actions (an app that publishes some), Widgets (an app that publishes some) and Settings. Each opens its popup; with one open, pointing at another opens that one ([onHover]), as in a
  * menu bar, whatever "Switch popups on hover" says for the items.
  */
 @Composable
@@ -335,6 +339,8 @@ fun AppMenuStrip(
     app: FrontApp,
     /** The app publishes quick actions: the bar has an Actions word. */
     hasActions: Boolean,
+    /** The app publishes home screen widgets: the bar has a Widgets word. */
+    hasWidgets: Boolean,
     look: StripLook,
     heightDp: Dp,
     open: AppMenu?,
@@ -345,12 +351,13 @@ fun AppMenuStrip(
 ) {
     MeasuredStrip(bias = -1f, onWidth = onWidth) {
         Row(Modifier.height(heightDp), verticalAlignment = Alignment.CenterVertically) {
-            for (menu in AppMenu.entries.filter { it.shownFor(app, hasActions) }) {
+            for (menu in AppMenu.entries.filter { it.shownFor(app, hasActions, hasWidgets) }) {
                 val word = when (menu) {
                     AppMenu.NAME -> app.label
                     AppMenu.WINDOW -> stringResource(R.string.appmenu_window)
                     AppMenu.TAB -> stringResource(R.string.appmenu_tab)
                     AppMenu.ACTIONS -> stringResource(R.string.appmenu_actions)
+                    AppMenu.WIDGETS -> stringResource(R.string.appmenu_widgets)
                     AppMenu.SETTINGS -> stringResource(R.string.appmenu_settings)
                 }
                 MenuWord(word, bold = menu == AppMenu.NAME, look = look, open = open == menu,

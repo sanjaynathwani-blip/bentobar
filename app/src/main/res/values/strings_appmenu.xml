@@ -30,6 +30,14 @@
     <string name="appmenu_actions">Actions</string>
     <string name="appmenu_action_unavailable">That action can only be started from the app\'s icon</string>
     <string name="appmenu_look_switch">App menu bar</string>
-    <string name="appmenu_look_switch_help">The app in front gets menus right of the clock: its name, Window, Actions (when it has some) and Settings. BentoBar then reads which app is in front and the system\'s title bar over its window</string>
-    <string name="appmenu_disclosure_reads">with the App menu bar on (Look), reads which app is in front (its package name) and the system\'s title bar over its window, to show that app\'s menus and press its title bar\'s buttons from the Window menu, and, when you start a quick action that only the launcher may start, the taskbar\'s icons (their names, which can include a window\'s title) to find that app\'s icon, and the menu it opens</string>
+    <string name="appmenu_look_switch_help">The app in front gets menus right of the clock: its name, Window, Actions and Widgets (when it has some) and Settings. BentoBar then reads which app is in front and the system\'s title bar over its window</string>
+    <string name="appmenu_disclosure_reads">with the App menu bar on (Look), reads which app is in front (its package name) and the system\'s title bar over its window, to show that app\'s menus and press its title bar\'s buttons from the Window menu, and, when you start a quick action that only the launcher may start, the taskbar\'s icons (their names, which can include a window\'s title) to find that app\'s icon, and the menu it opens, and, when you add a widget from the Widgets menu, the launcher\'s widget list (its apps\' and widgets\' names), to open that app\'s page and press its Add for you</string>
+    <string name="appmenu_widgets">Widgets</string>
+    <!-- A widget's size in home screen cells: columns × rows. -->
+    <string name="appmenu_widget_size">%1$d × %2$d</string>
+    <string name="appmenu_widget_add">Add %1$s to the home screen</string>
+    <string name="appmenu_widgets_note">+ adds a widget to your home screen. Your windows step aside for it: click them in the taskbar to bring them back.</string>
+    <string name="appmenu_widget_added">%1$s is on your home screen. Click your apps in the taskbar to bring your windows back.</string>
+    <string name="appmenu_widget_no_picker">The home screen\'s widget list didn\'t open. To add %1$s, right-click the home screen and choose Browse widgets.</string>
+    <string name="appmenu_widget_pick_it">%1$s couldn\'t be added for you: choose it here, in the widget list.</string>
 </resources>
