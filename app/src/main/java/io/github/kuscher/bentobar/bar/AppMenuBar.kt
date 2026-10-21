@@ -440,14 +440,14 @@ fun AppSettingsMenu(app: FrontApp, windows: AppWindows, host: MenuHost) {
     }
 }
 
-/** What the Tabs menu read: Chrome's tabs, or null when the relay to Chrome's debugging socket isn't there. */
+/** What the Tabs menu read: Chrome's tabs, or null when the bridge to Chrome's debugging socket isn't there. */
 private class ReadTabs(val tabs: List<LocalBridge.Tab>?)
 
 /**
- * Chrome's open tabs (PROTOTYPE: through Chrome's debugging socket, see [LocalBridge]). Chrome's list doesn't say
- * which window a tab is in, so it is every window's, in the order the tabs were opened; the one marked is the front
- * window's current tab (the window's title names it). A click brings that tab to the front; Next and Previous step
- * along the list.
+ * The tabs Chrome has loaded in its windows (PROTOTYPE: through Chrome's debugging socket, see [LocalBridge]); a tab
+ * Chrome hasn't loaded since it started is missing. Chrome doesn't say which window a tab is in, so it is every
+ * window's, in the order the tabs were opened; the one marked is the front window's current tab (the window's title
+ * names it). A click brings that tab to the front; Next and Previous step along the list.
  */
 @Composable
 fun TabMenu(current: String?, host: MenuHost) {

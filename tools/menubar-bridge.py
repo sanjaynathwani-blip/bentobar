@@ -5,31 +5,40 @@
 Run this in the Googlebook's Linux terminal with adb connected to the Googlebook itself (wireless debugging). The
 terminal app shows ports that listen in Linux on Android's 127.0.0.1, so BentoBar reaches both of these there:
 
-- :39222, Chrome's remote-debugging socket (the Tabs menu: its tabs, and switching between them). Only the shell may
-  open it: this forwards it with adb (to port 9222 here) and relays to it.
-- :39223, an app's published quick actions (the Actions menu): GET /shortcuts?pkg=PACKAGE answers with its
-  manifest and dynamic shortcuts as JSON, from `cmd shortcut get-shortcuts`, which only the shell and the home
-  screen may read.
+- :39222, Chrome's remote-debugging socket (the Tabs menu switches tabs there). Only the shell may open it: this
+  forwards it with adb (to port 9222 here) and relays to it.
+- :39223, this bridge's own answers:
+  - GET /tabs, the Tabs menu's list: the tabs in Chrome's own windows that Chrome has loaded, most recently used
+    first. Chrome's /json/list also names many tabs no window shows, and the pages of installed web apps, which
+    have windows of their own, so this keeps only the page targets Chrome has running whose display mode is
+    "browser".
+  - GET /shortcuts?pkg=PACKAGE, an app's published quick actions (the Actions menu): its manifest and dynamic
+    shortcuts as JSON, from `cmd shortcut get-shortcuts`, which only the shell and the home screen may read.
 
     python3 tools/menubar-bridge.py            (ADB_SERIAL=host:port picks the device; Ctrl+C stops it)
 
 WARNING: while this runs, EVERY app on the Googlebook can reach both ports, not only BentoBar. The terminal shows a
 port on Android's loopback only when it listens on all addresses here, so they can't be bound more narrowly. On
 :39222 any app gets Chrome's full DevTools: every tab's address, and running JavaScript in any tab, which can read
-its cookies. On :39223 any app can list any app's quick actions. Run it only to try the prototype, and stop it
-(Ctrl+C) when done. Only debug builds of BentoBar connect to it; a release build never does.
+its cookies. On :39223 any app can list Chrome's loaded tabs and any app's quick actions. Run it only to try the
+prototype, and stop it (Ctrl+C) when done. Only debug builds of BentoBar connect to it; a release build never does.
 """
+import base64
+import html
+import http.client
 import json
 import os
 import re
 import socket
+import struct
 import subprocess
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 CHROME_PORT = 39222
-SHORTCUTS_PORT = 39223
+BRIDGE_PORT = 39223
 FORWARD_PORT = 9222
 ADB = ["adb"] + (["-s", os.environ["ADB_SERIAL"]] if os.environ.get("ADB_SERIAL") else [])
 
@@ -76,6 +85,91 @@ def relay_chrome():
         threading.Thread(target=pipe, args=(upstream, client), daemon=True).start()
 
 
+def chrome_get(path):
+    """Chrome's answer to an HTTP request on its debugging socket: it answers only a request that names a local host."""
+    conn = http.client.HTTPConnection("127.0.0.1", FORWARD_PORT, timeout=5)
+    try:
+        conn.request("GET", path, headers={"Host": f"localhost:{FORWARD_PORT}"})
+        return json.loads(conn.getresponse().read())
+    finally:
+        conn.close()
+
+
+def cdp(path, method, params=None, timeout=5.0):
+    """One DevTools call on the websocket at [path], its result; raises when Chrome doesn't answer within [timeout]."""
+    with socket.create_connection(("127.0.0.1", FORWARD_PORT), timeout=timeout) as s:
+        key = base64.b64encode(os.urandom(16)).decode()
+        s.sendall((f"GET {path} HTTP/1.1\r\nHost: localhost:{FORWARD_PORT}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                   f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            if not (data := s.recv(4096)):
+                raise OSError("closed")
+            buf += data
+        head, buf = buf.split(b"\r\n\r\n", 1)
+        if b" 101 " not in head.split(b"\r\n")[0]:
+            raise OSError(head.split(b"\r\n")[0].decode(errors="replace"))
+        # A client's frame is masked: one text frame, final.
+        data, mask = json.dumps({"id": 1, "method": method, "params": params or {}}).encode(), os.urandom(4)
+        n = len(data)
+        size = bytes([0x80 | n]) if n < 126 else bytes([0x80 | 126]) + struct.pack(">H", n) if n < 65536 else bytes([0x80 | 127]) + struct.pack(">Q", n)
+        s.sendall(b"\x81" + size + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
+
+        def take(k):
+            nonlocal buf
+            while len(buf) < k:
+                if not (more := s.recv(65536)):
+                    raise OSError("closed")
+                buf += more
+            out, buf = buf[:k], buf[k:]
+            return out
+
+        message = b""
+        while True:
+            first, second = take(2)
+            n = second & 0x7F
+            if n == 126:
+                n = struct.unpack(">H", take(2))[0]
+            elif n == 127:
+                n = struct.unpack(">Q", take(8))[0]
+            message += take(n)
+            if first & 0x80:
+                answer = json.loads(message)
+                if answer.get("id") == 1:
+                    return answer.get("result", {})
+                message = b""  # an event, not the answer
+
+
+def in_browser_window(target_id):
+    """False for a page in an installed web app's own window (a TWA), whose display mode isn't "browser". A page that
+    doesn't answer (Chrome freezes some tabs in the background) counts as a browser tab."""
+    try:
+        result = cdp(f"/devtools/page/{target_id}", "Runtime.evaluate",
+                     {"expression": 'matchMedia("(display-mode: browser)").matches', "returnByValue": True}, timeout=1.5)
+        return result.get("result", {}).get("value") is not False
+    except (OSError, ValueError):
+        return True
+
+
+def loaded_tabs():
+    """The tabs in Chrome's own windows that Chrome has running, most recently used first, with /json/list's ids
+    (the ones /json/activate takes). A tab Chrome hasn't loaded since it started is left out."""
+    live = [t for t in cdp("/devtools/browser", "Target.getTargets")["targetInfos"] if t["type"] == "page"]
+    with ThreadPoolExecutor(8) as pool:
+        tabs = [t for t, ok in zip(live, pool.map(in_browser_window, [t["targetId"] for t in live])) if ok]
+    # The two lists' ids differ: match on address and title, each running page once.
+    left = {}
+    for t in tabs:
+        left[(t["url"], t["title"])] = left.get((t["url"], t["title"]), 0) + 1
+    found = []
+    for t in chrome_get("/json/list"):
+        key = (t.get("url", ""), html.unescape(t.get("title", "")))
+        if t.get("type") == "page" and left.get(key):
+            left[key] -= 1
+            found.append({"id": t["id"], "title": key[1], "url": key[0]})
+    return found
+
+
 def parse_intent(text):
     """The last intent of a shortcut, from Intent.toString() plus its persisted extras ("/null" or PersistableBundle)."""
     # A shortcut's back stack lists several intents: start at the last "Intent {" so its fields aren't the first one's.
@@ -118,21 +212,30 @@ def shortcuts(pkg, user):
     return sorted(found, key=lambda s: (s["kind"] != "manifest", s["rank"]))
 
 
-class Shortcuts(BaseHTTPRequestHandler):
+class Bridge(BaseHTTPRequestHandler):
     user = "0"
 
     def do_GET(self):
         url = urlparse(self.path)
         pkg = parse_qs(url.query).get("pkg", [""])[0]
-        if url.path != "/shortcuts" or not re.fullmatch(r"[A-Za-z0-9_.]+", pkg):
+        if url.path == "/tabs":
+            try:
+                body = json.dumps(loaded_tabs()).encode()
+            except (OSError, ValueError, KeyError) as e:
+                # The forward is gone or Chrome isn't running: an error, so the menu says the list isn't reachable.
+                print(f"tabs: {e}", flush=True)
+                self.send_error(502)
+                return
+        elif url.path == "/shortcuts" and re.fullmatch(r"[A-Za-z0-9_.]+", pkg):
+            try:
+                body = json.dumps(shortcuts(pkg, self.user)).encode()
+            except (RuntimeError, subprocess.TimeoutExpired) as e:
+                # adb dropped: an error, not an empty list, so the app keeps the shortcuts it read itself.
+                print(f"shortcuts {pkg}: {e}", flush=True)
+                self.send_error(502)
+                return
+        else:
             self.send_error(404)
-            return
-        try:
-            body = json.dumps(shortcuts(pkg, self.user)).encode()
-        except (RuntimeError, subprocess.TimeoutExpired) as e:
-            # adb dropped: an error, not an empty list, so the app keeps the shortcuts it read itself.
-            print(f"shortcuts {pkg}: {e}", flush=True)
-            self.send_error(502)
             return
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -145,10 +248,10 @@ class Shortcuts(BaseHTTPRequestHandler):
 
 
 def main():
-    Shortcuts.user = shell("am", "get-current-user").strip() or "0"
+    Bridge.user = shell("am", "get-current-user").strip() or "0"
     threading.Thread(target=relay_chrome, daemon=True).start()
-    print(f"Chrome's tabs on :{CHROME_PORT}, quick actions on :{SHORTCUTS_PORT} (user {Shortcuts.user})", flush=True)
-    ThreadingHTTPServer(("0.0.0.0", SHORTCUTS_PORT), Shortcuts).serve_forever()
+    print(f"Chrome on :{CHROME_PORT}, its loaded tabs and quick actions on :{BRIDGE_PORT} (user {Bridge.user})", flush=True)
+    ThreadingHTTPServer(("0.0.0.0", BRIDGE_PORT), Bridge).serve_forever()
 
 
 if __name__ == "__main__":
