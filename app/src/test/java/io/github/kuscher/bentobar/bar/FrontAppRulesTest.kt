@@ -31,6 +31,21 @@ class FrontAppRulesTest {
         assertNull(FrontAppRules.caption(listOf(statusBar, terminalCaption.copy(left = 1000), wide), wide))
     }
 
+    /** Settings as a Googlebook listed it (2026-10-21): both panes as app windows under one caption, the left one in front. */
+    @Test fun bothPanesOfATwoPaneWindowGetItsCaption() {
+        val caption = SeenWindow(1478, 7, active = false, focused = false, 721, 247, 2794, 312)
+        val right = SeenWindow(1480, 1, active = false, focused = false, 1405, 247, 2794, 1543)
+        val left = SeenWindow(1479, 1, active = true, focused = true, 721, 247, 1405, 1543)
+        val list = listOf(overlay, statusBar, caption, right, left, textCaption, text)
+        assertEquals(caption, FrontAppRules.caption(list, left))
+        assertEquals(caption, FrontAppRules.caption(list, right))
+        // A window of another app between them, lower down, is not a pane: the caption above it isn't the left one's.
+        val other = SeenWindow(1490, 1, active = false, focused = false, 600, 400, 1500, 1200)
+        assertNull(FrontAppRules.caption(listOf(statusBar, caption, other, left), left))
+        // Nor is a window at the same top that sticks out of the caption.
+        assertNull(FrontAppRules.caption(listOf(statusBar, caption, right.copy(right = 2850), left), left))
+    }
+
     @Test fun aFullScreenWindowHasNoCaption() {
         // Text's caption is still listed above it, but along the top of the window it covered before.
         val full = terminal.copy(top = 0, bottom = 1800)

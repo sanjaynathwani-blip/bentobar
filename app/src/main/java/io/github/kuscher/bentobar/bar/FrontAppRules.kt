@@ -37,13 +37,18 @@ object FrontAppRules {
 
     /**
      * [app]'s caption: a window-control window along its top edge, as wide as it. A window that shows two panes
-     * (Settings) is listed as its right pane only, under a caption as wide as the whole window: then the caption is
-     * the window-control window just above it in the list (captions lie directly over their window), if it covers it.
+     * (Settings) is listed as one app window per pane, under one caption as wide as the whole window: then the caption
+     * is the first window-control window above it in the list (captions lie directly over their window), past the
+     * other panes (app windows at the same top), if it covers it and every pane passed.
      */
     fun caption(windows: List<SeenWindow>, app: SeenWindow): SeenWindow? {
         windows.firstOrNull { it.type == WINDOW_CONTROL && it.left == app.left && it.right == app.right && it.top == app.top }?.let { return it }
-        val above = windows.getOrNull(windows.indexOf(app) - 1) ?: return null
-        return above.takeIf { it.type == WINDOW_CONTROL && it.top == app.top && it.left <= app.left && it.right >= app.right }
+        val panes = mutableListOf(app)
+        for (above in windows.subList(0, windows.indexOf(app).coerceAtLeast(0)).asReversed()) {
+            if (above.type == APPLICATION && above.top == app.top) { panes += above; continue }
+            return above.takeIf { c -> c.type == WINDOW_CONTROL && c.top == app.top && panes.all { c.left <= it.left && c.right >= it.right } }
+        }
+        return null
     }
 
     /**
