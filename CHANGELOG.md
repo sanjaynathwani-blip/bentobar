@@ -1,6 +1,6 @@
 # Changelog
 
-## Fork, unreleased
+## Fork 0.1.2 (2026-10-21)
 
 - **Widgets menu.** For an app that publishes home screen widgets, the menu bar has a **Widgets** menu: each widget with a preview, its size in home screen cells and a **+**. The + adds that widget to the home screen through the home screen's own widget picker. You see the picker turn to the app's page and add it, at a pace you can follow. Your windows are minimised while it opens, and a toast says how to bring them back.
 - **Privacy.** The disclosure, the accessibility description and the README now say that adding a widget reads the widget picker's list (its app and widget names) to press the widget's Add.
