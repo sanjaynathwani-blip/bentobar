@@ -1,5 +1,9 @@
 # Changelog
 
+## Fork 0.1.1 (2026-10-21)
+
+- **Window menu in two-pane windows.** In a window that shows two panes, such as Settings, the Window menu's actions (minimize, maximize, resize, close and the rest) now work whichever pane is in front. With the left pane in front they did nothing.
+
 ## Fork 0.1.0 (2026-10-20)
 
 The first release of the unofficial fork, **BentoBar fork**, based on BentoBar 1.6. It installs beside BentoBar as an app of its own.

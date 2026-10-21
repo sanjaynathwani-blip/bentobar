@@ -13,8 +13,8 @@ android {
         applicationId = "io.github.sanjaynathwani_blip.menubar"
         minSdk = 34
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
     }
 
     // Release signing from ~/.config/bentobar-fork (never committed): the fork's own key, not BentoBar's. Absent ->
